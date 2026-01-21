@@ -59,7 +59,7 @@ Complete phases sequentially with these priorities within each phase:
       Deps: click>=8.0, lancedb>=0.4, tiktoken>=0.5, google-cloud-aiplatform>=1.40, httpx>=0.25, rich>=13.0, pydantic>=2.0, structlog
       Dev: pytest>=7.0, pytest-cov>=4.0, mypy>=1.5
 
-- [ ] **Task 1.2**: Define core data models (SessionChunk, SessionMatch, SyncState)
+- [x] **Task 1.2**: Define core data models (SessionChunk, SessionMatch, SyncState)
       Files: `smart_fork/types.py`
       Test: `uv run mypy --strict smart_fork/types.py` passes
 
@@ -299,7 +299,7 @@ Differences between spec and plan (resolved):
 
 | Phase | Status | Tasks Done | MVP? |
 |-------|--------|------------|------|
-| 1. Foundation | In Progress | 1/5 | Yes |
+| 1. Foundation | In Progress | 2/5 | Yes |
 | 2. Embedding | Not Started | 0/5 | Yes |
 | 3. Storage | Not Started | 0/3 | Yes |
 | 4. Ingestion | Not Started | 0/4 | Yes |
@@ -334,3 +334,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Added `--quiet` flag to Task 6.1 from USAGE.md review |
 | 2026-01-21 | **MVP scope fix**: Phase 7 (US-005, US-006) moved into MVP per spec must-have requirements |
 | 2026-01-21 | Task 1.1 completed: pyproject.toml, smart_fork/__init__.py, cli.py stub, tests/__init__.py |
+| 2026-01-21 | Task 1.2 completed: types.py with SessionChunk, SessionMatch, SyncState dataclasses |
