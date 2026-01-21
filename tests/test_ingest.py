@@ -21,11 +21,15 @@ from smart_fork.ingest import (
     SyncResult,
     chunk_session,
     discover_sessions,
+    discover_sessions_from_storage,
     get_sessions_to_sync,
     load_sync_state,
     parse_session,
+    parse_session_from_storage,
     parse_session_messages,
+    parse_session_messages_from_storage,
     parse_session_metadata,
+    parse_session_metadata_from_file,
     save_sync_state,
     sync_sessions,
 )
@@ -43,6 +47,98 @@ def sessions_dir(tmp_path: Path) -> Path:
     sessions = tmp_path / "sessions"
     sessions.mkdir()
     return sessions
+
+
+@pytest.fixture
+def storage_dir(tmp_path: Path) -> Path:
+    """Create a temporary OpenCode storage directory structure.
+
+    Creates:
+        storage/session/  - Session metadata files
+        storage/message/  - Message metadata files
+        storage/part/     - Message content files
+    """
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "session").mkdir()
+    (storage / "message").mkdir()
+    (storage / "part").mkdir()
+    return storage
+
+
+def create_storage_session(
+    storage_dir: Path,
+    session_id: str,
+    *,
+    project_hash: str = "abc123",
+    directory: str = "/home/user/project",
+    timestamp_ms: int = 1705848000000,
+    parent_id: str | None = None,
+    messages: list[dict[str, str]] | None = None,
+) -> Path:
+    """Create a mock session in actual OpenCode storage format.
+
+    Creates session metadata in storage/session/<project_hash>/<session_id>.json
+    and corresponding messages/parts in storage/message/ and storage/part/.
+
+    Args:
+        storage_dir: OpenCode storage root
+        session_id: Session ID (e.g., "ses_abc123...")
+        project_hash: Project hash for grouping
+        directory: Repo path
+        timestamp_ms: Creation timestamp in milliseconds
+        parent_id: Parent session ID (for forked sessions)
+        messages: List of message dicts with 'role' and 'content'
+
+    Returns:
+        Path to the session metadata file
+    """
+    # Create project directory if needed
+    project_dir = storage_dir / "session" / project_hash
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create session metadata file
+    session_file = project_dir / f"{session_id}.json"
+    session_data: dict[str, Any] = {
+        "id": session_id,
+        "directory": directory,
+        "time": {"created": timestamp_ms, "updated": timestamp_ms + 1000},
+    }
+    if parent_id:
+        session_data["parentID"] = parent_id
+    session_file.write_text(json.dumps(session_data))
+
+    # Create messages if provided
+    if messages:
+        message_dir = storage_dir / "message" / session_id
+        message_dir.mkdir(parents=True, exist_ok=True)
+
+        for i, msg in enumerate(messages):
+            msg_id = f"msg_{session_id[4:12]}{i:04d}"
+            msg_file = message_dir / f"{msg_id}.json"
+            msg_data = {
+                "id": msg_id,
+                "sessionID": session_id,
+                "role": msg.get("role", "user"),
+                "time": {"created": timestamp_ms + i * 100},
+            }
+            msg_file.write_text(json.dumps(msg_data))
+
+            # Create part with content
+            part_dir = storage_dir / "part" / msg_id
+            part_dir.mkdir(parents=True, exist_ok=True)
+            part_id = f"prt_{msg_id[4:]}_001"
+            part_file = part_dir / f"{part_id}.json"
+            part_data = {
+                "id": part_id,
+                "sessionID": session_id,
+                "messageID": msg_id,
+                "type": "text",
+                "text": msg.get("content", ""),
+            }
+            part_file.write_text(json.dumps(part_data))
+
+    return session_file
 
 
 def create_session(
@@ -260,6 +356,470 @@ class TestDiscoverSessions:
         result = discover_sessions(file_path)
 
         assert result == []
+
+
+# ============================================================================
+# discover_sessions_from_storage() Tests (Actual OpenCode Format)
+# ============================================================================
+
+
+class TestDiscoverSessionsFromStorage:
+    """Tests for discover_sessions_from_storage function.
+
+    Tests the actual OpenCode storage format:
+    - storage/session/<project_hash>/ses_*.json
+    - storage/message/ses_*/msg_*.json
+    - storage/part/msg_*/prt_*.json
+    """
+
+    def test_discovers_valid_sessions(self, storage_dir: Path) -> None:
+        """Should find all valid session files across project directories."""
+        create_storage_session(storage_dir, "ses_abc123", project_hash="proj1")
+        create_storage_session(storage_dir, "ses_def456", project_hash="proj1")
+        create_storage_session(storage_dir, "ses_ghi789", project_hash="proj2")
+
+        result = discover_sessions_from_storage(storage_dir)
+
+        assert len(result) == 3
+        session_ids = {s.session_id for s in result}
+        assert session_ids == {"ses_abc123", "ses_def456", "ses_ghi789"}
+
+    def test_returns_empty_for_nonexistent_dir(self, tmp_path: Path) -> None:
+        """Should return empty list if storage dir doesn't exist."""
+        nonexistent = tmp_path / "does_not_exist"
+
+        result = discover_sessions_from_storage(nonexistent)
+
+        assert result == []
+
+    def test_returns_empty_for_empty_storage(self, storage_dir: Path) -> None:
+        """Should return empty list when no session files exist."""
+        result = discover_sessions_from_storage(storage_dir)
+
+        assert result == []
+
+    def test_skips_non_session_files(self, storage_dir: Path) -> None:
+        """Should only process files matching ses_*.json pattern."""
+        create_storage_session(storage_dir, "ses_valid", project_hash="proj1")
+
+        # Create non-matching files
+        project_dir = storage_dir / "session" / "proj1"
+        (project_dir / "config.json").write_text("{}")
+        (project_dir / "other_file.txt").write_text("data")
+
+        result = discover_sessions_from_storage(storage_dir)
+
+        assert len(result) == 1
+        assert result[0].session_id == "ses_valid"
+
+    def test_returns_session_info_with_file_path(self, storage_dir: Path) -> None:
+        """Should return SessionInfo with path pointing to session file (not dir)."""
+        session_file = create_storage_session(
+            storage_dir, "ses_test123", project_hash="proj1"
+        )
+
+        result = discover_sessions_from_storage(storage_dir)
+
+        assert len(result) == 1
+        session = result[0]
+        assert session.session_id == "ses_test123"
+        assert session.path == session_file
+        assert session.path.is_file()
+        assert isinstance(session.last_modified, int)
+        assert session.last_modified > 0
+
+    def test_sorted_by_last_modified_descending(self, storage_dir: Path) -> None:
+        """Should return sessions sorted newest first."""
+        import os
+
+        # Create sessions
+        path1 = create_storage_session(storage_dir, "ses_old", project_hash="proj1")
+        path2 = create_storage_session(storage_dir, "ses_middle", project_hash="proj1")
+        path3 = create_storage_session(storage_dir, "ses_new", project_hash="proj1")
+
+        # Set different modification times
+        now = time.time()
+        old_time = now - 1000
+        middle_time = now - 500
+        new_time = now
+
+        os.utime(path1, (old_time, old_time))
+        os.utime(path2, (middle_time, middle_time))
+        os.utime(path3, (new_time, new_time))
+
+        result = discover_sessions_from_storage(storage_dir)
+
+        assert len(result) == 3
+        assert result[0].session_id == "ses_new"
+        assert result[1].session_id == "ses_middle"
+        assert result[2].session_id == "ses_old"
+
+    def test_handles_path_with_tilde(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should expand ~ in path."""
+        storage_dir = tmp_path / "storage"
+        storage_dir.mkdir()
+        (storage_dir / "session").mkdir()
+        (storage_dir / "message").mkdir()
+        (storage_dir / "part").mkdir()
+        create_storage_session(storage_dir, "ses_test", project_hash="proj1")
+
+        def mock_expanduser(p: Path) -> Path:
+            if str(p).startswith("~"):
+                return tmp_path / str(p)[2:]
+            return p
+
+        monkeypatch.setattr(Path, "expanduser", mock_expanduser)
+
+        result = discover_sessions_from_storage(Path("~/storage"))
+
+        assert len(result) == 1
+        assert result[0].session_id == "ses_test"
+
+    def test_handles_file_as_storage_dir(self, tmp_path: Path) -> None:
+        """Should return empty when storage_dir is a file, not directory."""
+        file_path = tmp_path / "not_a_dir"
+        file_path.write_text("I'm a file")
+
+        result = discover_sessions_from_storage(file_path)
+
+        assert result == []
+
+
+# ============================================================================
+# parse_session_metadata_from_file() Tests (Actual OpenCode Format)
+# ============================================================================
+
+
+class TestParseSessionMetadataFromFile:
+    """Tests for parse_session_metadata_from_file function.
+
+    Tests parsing session metadata from actual OpenCode format:
+    {
+        "id": "ses_abc123...",
+        "directory": "/path/to/repo",
+        "time": {"created": 1234567890123, "updated": ...},
+        "parentID": "ses_parent..." (optional)
+    }
+    """
+
+    def test_parses_complete_metadata(self, storage_dir: Path) -> None:
+        """Should parse all fields when present."""
+        session_file = create_storage_session(
+            storage_dir,
+            "ses_test",
+            project_hash="proj1",
+            directory="/home/user/project",
+            timestamp_ms=1705848000000,
+            parent_id="ses_parent123",
+        )
+
+        result = parse_session_metadata_from_file(session_file)
+
+        assert result is not None
+        assert result.session_id == "ses_test"
+        assert result.repo_path == "/home/user/project"
+        assert result.timestamp == 1705848000  # Converted from ms to s
+        assert result.parent_session_id == "ses_parent123"
+
+    def test_parses_minimal_metadata(self, storage_dir: Path) -> None:
+        """Should handle minimal session file with defaults."""
+        project_dir = storage_dir / "session" / "proj1"
+        project_dir.mkdir(parents=True)
+        session_file = project_dir / "ses_minimal.json"
+        session_file.write_text('{"id": "ses_minimal"}')
+
+        result = parse_session_metadata_from_file(session_file)
+
+        assert result is not None
+        assert result.session_id == "ses_minimal"
+        assert result.repo_path == ""
+        assert result.parent_session_id is None
+        # timestamp should fall back to file mtime
+        assert result.timestamp > 0
+
+    def test_returns_none_for_missing_file(self, tmp_path: Path) -> None:
+        """Should return None when file doesn't exist."""
+        nonexistent = tmp_path / "does_not_exist.json"
+
+        result = parse_session_metadata_from_file(nonexistent)
+
+        assert result is None
+
+    def test_returns_none_for_invalid_json(self, storage_dir: Path) -> None:
+        """Should return None for malformed JSON."""
+        project_dir = storage_dir / "session" / "proj1"
+        project_dir.mkdir(parents=True)
+        session_file = project_dir / "ses_invalid.json"
+        session_file.write_text("{invalid json")
+
+        result = parse_session_metadata_from_file(session_file)
+
+        assert result is None
+
+    def test_returns_none_for_non_object_json(self, storage_dir: Path) -> None:
+        """Should return None if JSON is not an object."""
+        project_dir = storage_dir / "session" / "proj1"
+        project_dir.mkdir(parents=True)
+        session_file = project_dir / "ses_array.json"
+        session_file.write_text("[]")
+
+        result = parse_session_metadata_from_file(session_file)
+
+        assert result is None
+
+    def test_uses_id_from_filename_if_missing(self, storage_dir: Path) -> None:
+        """Should derive session_id from filename if not in JSON."""
+        project_dir = storage_dir / "session" / "proj1"
+        project_dir.mkdir(parents=True)
+        session_file = project_dir / "ses_from_filename.json"
+        session_file.write_text('{"directory": "/test"}')
+
+        result = parse_session_metadata_from_file(session_file)
+
+        assert result is not None
+        assert result.session_id == "ses_from_filename"
+
+    def test_converts_millisecond_timestamp(self, storage_dir: Path) -> None:
+        """Should convert time.created from milliseconds to seconds."""
+        project_dir = storage_dir / "session" / "proj1"
+        project_dir.mkdir(parents=True)
+        session_file = project_dir / "ses_ms.json"
+        session_file.write_text('{"id": "ses_ms", "time": {"created": 1705848000123}}')
+
+        result = parse_session_metadata_from_file(session_file)
+
+        assert result is not None
+        assert result.timestamp == 1705848000  # Truncated from ms
+
+    def test_handles_float_timestamp(self, storage_dir: Path) -> None:
+        """Should handle float timestamp values."""
+        project_dir = storage_dir / "session" / "proj1"
+        project_dir.mkdir(parents=True)
+        session_file = project_dir / "ses_float.json"
+        session_file.write_text(
+            '{"id": "ses_float", "time": {"created": 1705848000123.5}}'
+        )
+
+        result = parse_session_metadata_from_file(session_file)
+
+        assert result is not None
+        assert result.timestamp == 1705848000
+
+
+# ============================================================================
+# parse_session_messages_from_storage() Tests (Actual OpenCode Format)
+# ============================================================================
+
+
+class TestParseSessionMessagesFromStorage:
+    """Tests for parse_session_messages_from_storage function.
+
+    Tests parsing messages from actual OpenCode format:
+    - storage/message/<session_id>/msg_*.json
+    - storage/part/<msg_id>/prt_*.json
+    """
+
+    def test_parses_valid_messages(self, storage_dir: Path) -> None:
+        """Should parse messages from message and part directories."""
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there!"},
+        ]
+        create_storage_session(
+            storage_dir, "ses_test", project_hash="proj1", messages=messages
+        )
+
+        result = parse_session_messages_from_storage("ses_test", storage_dir)
+
+        assert len(result) == 2
+        assert result[0]["role"] == "user"
+        assert result[0]["content"] == "Hello"
+        assert result[1]["role"] == "assistant"
+        assert result[1]["content"] == "Hi there!"
+
+    def test_returns_empty_for_missing_message_dir(self, storage_dir: Path) -> None:
+        """Should return empty list if message directory doesn't exist."""
+        result = parse_session_messages_from_storage("ses_nonexistent", storage_dir)
+
+        assert result == []
+
+    def test_returns_empty_for_empty_message_dir(self, storage_dir: Path) -> None:
+        """Should return empty list if no message files exist."""
+        message_dir = storage_dir / "message" / "ses_empty"
+        message_dir.mkdir(parents=True)
+
+        result = parse_session_messages_from_storage("ses_empty", storage_dir)
+
+        assert result == []
+
+    def test_skips_messages_without_parts(self, storage_dir: Path) -> None:
+        """Should skip messages that have no part files."""
+        # Create session
+        create_storage_session(
+            storage_dir,
+            "ses_test",
+            project_hash="proj1",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+
+        # Remove the part directory for the first message
+        msg_dir = storage_dir / "message" / "ses_test"
+        for msg_file in msg_dir.glob("msg_*.json"):
+            with open(msg_file) as f:
+                msg_data = json.load(f)
+            part_dir = storage_dir / "part" / msg_data["id"]
+            if part_dir.exists():
+                for p in part_dir.iterdir():
+                    p.unlink()
+                part_dir.rmdir()
+            break
+
+        result = parse_session_messages_from_storage("ses_test", storage_dir)
+
+        # Should have 0 messages since we removed the part
+        assert len(result) == 0
+
+    def test_only_includes_text_type_parts(self, storage_dir: Path) -> None:
+        """Should only include parts with type='text'."""
+        # Create session with message
+        create_storage_session(
+            storage_dir,
+            "ses_test",
+            project_hash="proj1",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+
+        # Add a non-text part
+        msg_dir = storage_dir / "message" / "ses_test"
+        for msg_file in msg_dir.glob("msg_*.json"):
+            with open(msg_file) as f:
+                msg_data = json.load(f)
+            part_dir = storage_dir / "part" / msg_data["id"]
+            tool_part = part_dir / "prt_tool_001.json"
+            tool_part.write_text(
+                json.dumps(
+                    {
+                        "id": "prt_tool_001",
+                        "type": "tool-call",
+                        "tool": "some_tool",
+                    }
+                )
+            )
+            break
+
+        result = parse_session_messages_from_storage("ses_test", storage_dir)
+
+        # Should have 1 message (the text part only)
+        assert len(result) == 1
+        assert "Hello" in result[0]["content"]
+
+    def test_sorts_messages_by_creation_time(self, storage_dir: Path) -> None:
+        """Should return messages sorted by creation time."""
+        messages = [
+            {"role": "user", "content": "First"},
+            {"role": "assistant", "content": "Second"},
+            {"role": "user", "content": "Third"},
+        ]
+        create_storage_session(
+            storage_dir, "ses_test", project_hash="proj1", messages=messages
+        )
+
+        result = parse_session_messages_from_storage("ses_test", storage_dir)
+
+        assert len(result) == 3
+        assert result[0]["content"] == "First"
+        assert result[1]["content"] == "Second"
+        assert result[2]["content"] == "Third"
+
+    def test_handles_empty_content(self, storage_dir: Path) -> None:
+        """Should skip messages with empty text content."""
+        create_storage_session(
+            storage_dir,
+            "ses_test",
+            project_hash="proj1",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+
+        # Modify the part to have empty text
+        part_dir = storage_dir / "part"
+        for msg_part_dir in part_dir.iterdir():
+            for part_file in msg_part_dir.glob("prt_*.json"):
+                part_file.write_text(
+                    json.dumps(
+                        {
+                            "id": "prt_empty",
+                            "type": "text",
+                            "text": "",
+                        }
+                    )
+                )
+
+        result = parse_session_messages_from_storage("ses_test", storage_dir)
+
+        # Empty content should be skipped
+        assert len(result) == 0
+
+
+# ============================================================================
+# parse_session_from_storage() Tests (Actual OpenCode Format)
+# ============================================================================
+
+
+class TestParseSessionFromStorage:
+    """Tests for parse_session_from_storage function.
+
+    Tests the combined parsing of session metadata and messages.
+    """
+
+    def test_parses_complete_session(self, storage_dir: Path) -> None:
+        """Should parse metadata and messages together."""
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there!"},
+        ]
+        session_file = create_storage_session(
+            storage_dir,
+            "ses_test",
+            project_hash="proj1",
+            directory="/home/user/project",
+            timestamp_ms=1705848000000,
+            parent_id="ses_parent123",
+            messages=messages,
+        )
+
+        result = parse_session_from_storage(session_file, storage_dir)
+
+        assert result is not None
+        assert result.session_id == "ses_test"
+        assert result.repo_path == "/home/user/project"
+        assert result.timestamp == 1705848000
+        assert result.parent_session_id == "ses_parent123"
+        assert len(result.messages) == 2
+
+    def test_returns_none_for_invalid_metadata(self, storage_dir: Path) -> None:
+        """Should return None when metadata parsing fails."""
+        project_dir = storage_dir / "session" / "proj1"
+        project_dir.mkdir(parents=True)
+        session_file = project_dir / "ses_invalid.json"
+        session_file.write_text("{invalid json")
+
+        result = parse_session_from_storage(session_file, storage_dir)
+
+        assert result is None
+
+    def test_returns_session_with_empty_messages(self, storage_dir: Path) -> None:
+        """Should return session even with no messages."""
+        session_file = create_storage_session(
+            storage_dir, "ses_empty", project_hash="proj1", messages=None
+        )
+
+        result = parse_session_from_storage(session_file, storage_dir)
+
+        assert result is not None
+        assert result.session_id == "ses_empty"
+        assert result.messages == []
 
 
 # ============================================================================

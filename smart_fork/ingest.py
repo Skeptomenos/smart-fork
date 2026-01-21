@@ -346,21 +346,24 @@ def parse_session_metadata_from_file(session_file: Path) -> SessionMetadata | No
     repo_path = data.get("directory") or ""
 
     # Extract timestamp from time.created (milliseconds -> seconds)
+    # Fall back to file mtime if not present or zero
     time_data = data.get("time", {})
-    timestamp_ms = time_data.get("created", 0)
-    if isinstance(timestamp_ms, int):
+    timestamp_ms = time_data.get("created")
+    if isinstance(timestamp_ms, int) and timestamp_ms > 0:
         timestamp = timestamp_ms // 1000
-    elif isinstance(timestamp_ms, float):
+    elif isinstance(timestamp_ms, float) and timestamp_ms > 0:
         timestamp = int(timestamp_ms // 1000)
     else:
+        # Fall back to file modification time
         try:
             timestamp = int(session_file.stat().st_mtime)
         except OSError:
             timestamp = 0
 
-    # Note: parent_session_id is not available in actual OpenCode format
-    # This means chain_quality scoring will always be 0 for now
-    parent_session_id = None
+    # Extract parent_session_id from "parentID" field (actual OpenCode format)
+    # This enables chain_quality scoring for forked sessions
+    parent_id = data.get("parentID")
+    parent_session_id = str(parent_id) if parent_id else None
 
     # Model is not stored in session metadata in actual format
     model = data.get("model")
