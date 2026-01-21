@@ -31,7 +31,7 @@ Paste the fork command in a new terminal, and continue with full context.
 
 ```bash
 # Clone the repo
-git clone https://github.com/dhelms-bw/smart-fork.git
+git clone https://github.com/Skeptomenos/smart-fork.git
 cd smart-fork
 
 # Install with uv
