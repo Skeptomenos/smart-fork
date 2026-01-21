@@ -232,9 +232,29 @@ Complete phases sequentially with these priorities within each phase:
             100 sessions in 5.2s (well under 10 min), search avg 0.19s (well under 3s);
             Chunking 3.6M chars/sec, DB writes 2834 chunks/sec; 370 tests passing
 
-- [ ] **Task 8.4**: End-to-end manual verification
+### Critical Fix: OpenCode Storage Format
+
+E2E verification revealed that OpenCode uses a different storage format than assumed in the spec.
+
+- [ ] **Task 8.4a**: Update ingest.py to use actual OpenCode storage format
+      Files: `smart_fork/ingest.py`, `tests/test_ingest.py`
+      Issue: Sessions are at `storage/session/<project>/*.json`, messages in `storage/message/ses_*/msg_*.json`,
+             content in `storage/part/msg_*/prt_*.json` (not `sessions/<id>/session.json` + `messages.json`)
+      Test: discover_sessions() finds sessions in actual OpenCode structure
+
+- [ ] **Task 8.4b**: Update spec to document actual storage format
+      Files: `ralph-wiggum/specs/spec-smart-fork.md`
+      Change: Document actual `storage/session/`, `storage/message/`, `storage/part/` structure
+
+- [ ] **Task 8.4c**: Handle missing parent_session_id in scoring
+      Files: `smart_fork/query.py`, `tests/test_scoring.py`
+      Issue: Actual sessions may not have parent_session_id field; scoring must handle gracefully
+      Test: chain_quality score handles missing parent gracefully (defaults to 0)
+
+- [~] **Task 8.4**: End-to-end manual verification — **IN PROGRESS**
       Files: N/A
       Test: `smart-fork sync` → `smart-fork search` → `opencode --session <id>` works
+      Note: Blocked on Tasks 8.4a-8.4c; discovered OpenCode storage format mismatch
 
 ---
 
@@ -400,3 +420,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 8.1 completed: mypy --strict already passing with zero errors across all 10 source files; 366 tests passing |
 | 2026-01-21 | Task 8.2 completed: pytest --cov shows 89% coverage (exceeds 80% threshold); 366 tests passing, mypy --strict clean |
 | 2026-01-21 | Task 8.3 completed: Performance validation tests added (tests/test_performance.py) - 100 sessions ingested in 5.2s, search latency avg 0.19s, 370 tests passing |
+| 2026-01-21 | E2E verification (Task 8.4) revealed OpenCode storage format mismatch. Sessions are at `storage/session/<project>/*.json` with messages in `storage/message/ses_*/msg_*.json` and content in `storage/part/msg_*/prt_*.json`. Added tasks 8.4a-8.4c to fix. |

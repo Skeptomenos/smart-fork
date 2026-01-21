@@ -354,7 +354,7 @@ def _create_session_matches(
     db: ChunkDatabase,
     config: SmartForkConfig,
     query_timestamp: int,
-    sessions_dir: Path,
+    sessions_dir: Path | None,
 ) -> list[SessionMatch]:
     """Convert session groups to SessionMatch objects with composite scoring.
 
@@ -367,7 +367,8 @@ def _create_session_matches(
         db: Database for looking up total chunk counts per session.
         config: Configuration with scoring weights and recency half-life.
         query_timestamp: Unix timestamp when query was issued (for recency).
-        sessions_dir: Path to sessions directory for parent lookup.
+        sessions_dir: Path to sessions directory for parent lookup. If None,
+                     uses actual OpenCode format (no parent tracking available).
 
     Returns:
         List of SessionMatch objects, sorted by composite score (descending).
@@ -431,7 +432,7 @@ def _create_session_matches(
 
 def _get_session_has_parent(
     session_id: str,
-    sessions_dir: Path,
+    sessions_dir: Path | None,
     cache: dict[str, bool],
 ) -> bool:
     """Check if a session has a parent link (was forked).
@@ -439,18 +440,31 @@ def _get_session_has_parent(
     Reads session.json to check for parent_session_id or forked_from field.
     Results are cached to avoid repeated file I/O for the same session.
 
+    Note: In the actual OpenCode storage format, parent_session_id is not
+    available. This function returns False for production use. The chain_quality
+    scoring weight (10%) is effectively zero until OpenCode adds parent tracking.
+
     Args:
         session_id: The session ID to check.
-        sessions_dir: Path to the sessions directory.
+        sessions_dir: Path to the sessions directory (legacy format only).
+                     If None, assumes actual OpenCode format (no parent tracking).
         cache: Dictionary for caching results.
 
     Returns:
-        True if session has a parent, False otherwise (including on errors).
+        True if session has a parent, False otherwise (including on errors,
+        or when sessions_dir is None).
     """
     if session_id in cache:
         return cache[session_id]
 
     has_parent = False
+
+    # In actual OpenCode format (sessions_dir is None), parent tracking
+    # is not available. Return False.
+    if sessions_dir is None:
+        cache[session_id] = False
+        return False
+
     session_path = sessions_dir / session_id / "session.json"
 
     try:

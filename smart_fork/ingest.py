@@ -1,11 +1,19 @@
 """Ingestion pipeline for Smart Fork.
 
 Handles discovery, parsing, and indexing of OpenCode session transcripts.
-Sessions are read from ~/.local/share/opencode/sessions/ (read-only).
+
+OpenCode Storage Structure (actual format as of 2026-01):
+  ~/.local/share/opencode/storage/
+    session/<project_hash>/ses_*.json  (session metadata)
+    message/ses_*/msg_*.json           (message metadata)
+    part/msg_*/prt_*.json              (message content with type=="text")
+
+Legacy Format (for testing):
+  sessions/ses_*/session.json + messages.json
 
 The ingestion pipeline:
-1. Discover sessions: Find all session directories in the sessions directory
-2. Parse sessions: Extract metadata and messages from session files
+1. Discover sessions: Find all session files across project hash directories
+2. Parse sessions: Extract metadata and collect messages from part files
 3. Chunk sessions: Split transcript into semantic chunks for embedding
 4. Embed and store: Generate embeddings and store in LanceDB
 
@@ -189,8 +197,330 @@ def discover_sessions(
     return sessions
 
 
+def discover_sessions_from_storage(
+    storage_dir: Path,
+) -> list[SessionInfo]:
+    """Find all sessions in the OpenCode storage directory (actual format).
+
+    Scans storage/session/<project_hash>/ses_*.json for session metadata files.
+    This is the actual OpenCode storage format as of 2026-01.
+
+    Session metadata format (ses_*.json):
+        {
+            "id": "ses_abc123...",
+            "directory": "/path/to/repo",  # repo_path
+            "time": {"created": 1234567890123, "updated": ...}  # milliseconds
+        }
+
+    Args:
+        storage_dir: Path to OpenCode storage directory
+                    (typically ~/.local/share/opencode/storage/)
+
+    Returns:
+        List of SessionInfo for all valid sessions found,
+        sorted by last_modified descending (newest first).
+    """
+    storage_dir = storage_dir.expanduser()
+    session_metadata_dir = storage_dir / "session"
+
+    if not session_metadata_dir.exists():
+        logger.info("session_metadata_dir_not_found", path=str(session_metadata_dir))
+        return []
+
+    if not session_metadata_dir.is_dir():
+        logger.warning(
+            "session_metadata_path_not_directory", path=str(session_metadata_dir)
+        )
+        return []
+
+    sessions: list[SessionInfo] = []
+
+    try:
+        # Iterate through project hash directories
+        for project_dir in session_metadata_dir.iterdir():
+            if not project_dir.is_dir():
+                continue
+
+            # Iterate through session JSON files in each project
+            for session_file in project_dir.glob("ses_*.json"):
+                try:
+                    session_id = session_file.stem  # e.g., "ses_abc123..."
+
+                    # Get last modified time from file
+                    last_modified = int(session_file.stat().st_mtime)
+
+                    # Store the file path (not directory) for the new format
+                    sessions.append(
+                        SessionInfo(
+                            session_id=session_id,
+                            path=session_file,  # File path, not directory
+                            last_modified=last_modified,
+                        )
+                    )
+
+                except OSError as e:
+                    logger.warning(
+                        "session_file_stat_failed",
+                        session_file=str(session_file),
+                        error=str(e),
+                    )
+                    continue
+
+    except PermissionError as e:
+        logger.error(
+            "session_metadata_dir_permission_denied",
+            path=str(session_metadata_dir),
+            error=str(e),
+        )
+        return []
+    except OSError as e:
+        logger.error(
+            "session_metadata_dir_read_error",
+            path=str(session_metadata_dir),
+            error=str(e),
+        )
+        return []
+
+    # Sort by last_modified descending (newest first)
+    sessions.sort(key=lambda s: s.last_modified, reverse=True)
+
+    logger.info(
+        "sessions_discovered_from_storage",
+        count=len(sessions),
+        storage_dir=str(storage_dir),
+    )
+
+    return sessions
+
+
+def parse_session_metadata_from_file(session_file: Path) -> SessionMetadata | None:
+    """Parse metadata from a session JSON file (actual OpenCode format).
+
+    Actual format (ses_*.json):
+        {
+            "id": "ses_abc123...",
+            "directory": "/path/to/repo",
+            "time": {"created": 1234567890123, "updated": ...}  # milliseconds
+        }
+
+    Args:
+        session_file: Path to the session JSON file (not directory)
+
+    Returns:
+        SessionMetadata if parsing succeeds, None if file is missing or invalid.
+    """
+    if not session_file.exists():
+        logger.warning("session_file_not_found", path=str(session_file))
+        return None
+
+    try:
+        with open(session_file, encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        logger.warning(
+            "session_file_invalid_json",
+            path=str(session_file),
+            error=str(e),
+        )
+        return None
+    except OSError as e:
+        logger.warning(
+            "session_file_read_error",
+            path=str(session_file),
+            error=str(e),
+        )
+        return None
+
+    if not isinstance(data, dict):
+        logger.warning(
+            "session_file_not_object",
+            path=str(session_file),
+            actual_type=type(data).__name__,
+        )
+        return None
+
+    # Extract session_id from file or data
+    session_id = data.get("id") or session_file.stem
+
+    # Extract repo_path from "directory" field
+    repo_path = data.get("directory") or ""
+
+    # Extract timestamp from time.created (milliseconds -> seconds)
+    time_data = data.get("time", {})
+    timestamp_ms = time_data.get("created", 0)
+    if isinstance(timestamp_ms, int):
+        timestamp = timestamp_ms // 1000
+    elif isinstance(timestamp_ms, float):
+        timestamp = int(timestamp_ms // 1000)
+    else:
+        try:
+            timestamp = int(session_file.stat().st_mtime)
+        except OSError:
+            timestamp = 0
+
+    # Note: parent_session_id is not available in actual OpenCode format
+    # This means chain_quality scoring will always be 0 for now
+    parent_session_id = None
+
+    # Model is not stored in session metadata in actual format
+    model = data.get("model")
+
+    return SessionMetadata(
+        session_id=str(session_id),
+        repo_path=str(repo_path),
+        timestamp=timestamp,
+        parent_session_id=parent_session_id,
+        model=model,
+    )
+
+
+def parse_session_messages_from_storage(
+    session_id: str,
+    storage_dir: Path,
+) -> list[dict[str, str]]:
+    """Parse messages from OpenCode storage (actual format).
+
+    Collects messages from:
+    - storage/message/<session_id>/msg_*.json (message metadata)
+    - storage/part/<msg_id>/prt_*.json (message content where type=="text")
+
+    Args:
+        session_id: The session ID (e.g., "ses_abc123...")
+        storage_dir: Path to OpenCode storage directory
+
+    Returns:
+        List of message dicts with 'role' and 'content' keys,
+        sorted by creation time.
+    """
+    storage_dir = storage_dir.expanduser()
+    message_dir = storage_dir / "message" / session_id
+
+    if not message_dir.exists():
+        logger.debug(
+            "session_message_dir_not_found",
+            session_id=session_id,
+            path=str(message_dir),
+        )
+        return []
+
+    # Collect message files and sort by creation time
+    message_files: list[tuple[int, Path]] = []
+    for msg_file in message_dir.glob("msg_*.json"):
+        try:
+            with open(msg_file, encoding="utf-8") as f:
+                msg_data = json.load(f)
+            created_time = msg_data.get("time", {}).get("created", 0)
+            message_files.append((created_time, msg_file))
+        except (json.JSONDecodeError, OSError) as e:
+            logger.debug(
+                "message_file_read_error",
+                path=str(msg_file),
+                error=str(e),
+            )
+            continue
+
+    # Sort by creation time
+    message_files.sort(key=lambda x: x[0])
+
+    # Collect messages with content from parts
+    messages: list[dict[str, str]] = []
+    part_dir = storage_dir / "part"
+
+    for _, msg_file in message_files:
+        try:
+            with open(msg_file, encoding="utf-8") as f:
+                msg_data = json.load(f)
+
+            msg_id = msg_data.get("id", "")
+            role = msg_data.get("role", "unknown")
+
+            # Collect text content from parts
+            msg_part_dir = part_dir / msg_id
+            if not msg_part_dir.exists():
+                # Try using the message directory within the part folder
+                # Some versions might store parts differently
+                continue
+
+            # Collect text parts sorted by start time
+            text_parts: list[tuple[int, str]] = []
+            for part_file in msg_part_dir.glob("prt_*.json"):
+                try:
+                    with open(part_file, encoding="utf-8") as f:
+                        part_data = json.load(f)
+
+                    # Only include text type parts
+                    if part_data.get("type") != "text":
+                        continue
+
+                    text = part_data.get("text", "")
+                    if not text:
+                        continue
+
+                    start_time = part_data.get("time", {}).get("start", 0)
+                    text_parts.append((start_time, text))
+
+                except (json.JSONDecodeError, OSError):
+                    continue
+
+            if not text_parts:
+                continue
+
+            # Sort by start time and concatenate
+            text_parts.sort(key=lambda x: x[0])
+            content = "\n".join(part[1] for part in text_parts)
+
+            if content.strip():
+                messages.append({"role": str(role), "content": content})
+
+        except (json.JSONDecodeError, OSError) as e:
+            logger.debug(
+                "message_parse_error",
+                path=str(msg_file),
+                error=str(e),
+            )
+            continue
+
+    logger.debug(
+        "messages_parsed_from_storage",
+        session_id=session_id,
+        message_count=len(messages),
+    )
+
+    return messages
+
+
+def parse_session_from_storage(
+    session_file: Path,
+    storage_dir: Path,
+) -> ParsedSession | None:
+    """Parse a complete session from OpenCode storage format.
+
+    Combines parse_session_metadata_from_file and parse_session_messages_from_storage.
+
+    Args:
+        session_file: Path to the session JSON file
+        storage_dir: Path to OpenCode storage root
+
+    Returns:
+        ParsedSession if parsing succeeds, None if metadata is invalid.
+    """
+    metadata = parse_session_metadata_from_file(session_file)
+    if metadata is None:
+        return None
+
+    messages = parse_session_messages_from_storage(metadata.session_id, storage_dir)
+
+    return ParsedSession(
+        session_id=metadata.session_id,
+        repo_path=metadata.repo_path,
+        timestamp=metadata.timestamp,
+        parent_session_id=metadata.parent_session_id,
+        messages=messages,
+    )
+
+
 def parse_session_metadata(session_path: Path) -> SessionMetadata | None:
-    """Parse metadata from a session's session.json file.
+    """Parse metadata from a session's session.json file (legacy format).
 
     Extracts key metadata needed for indexing: repo path (for scoping),
     timestamp (for recency scoring), and parent session (for chain quality).
@@ -717,8 +1047,20 @@ def sync_sessions(
     # Load sync state
     sync_state = load_sync_state(config.paths.sync_state_path)
 
-    # Discover sessions
-    sessions = discover_sessions(config.paths.sessions_dir)
+    # Discover sessions - use legacy or actual format based on config
+    use_legacy_format = config.paths.is_legacy_mode()
+
+    if use_legacy_format:
+        # Legacy format: sessions_dir/ses_*/session.json + messages.json
+        assert config.paths.sessions_dir is not None
+        sessions = discover_sessions(config.paths.sessions_dir)
+        storage_dir = None
+        log_path = str(config.paths.sessions_dir)
+    else:
+        # Actual OpenCode format: storage/session/<project>/ses_*.json
+        sessions = discover_sessions_from_storage(config.paths.storage_dir)
+        storage_dir = config.paths.storage_dir
+        log_path = str(config.paths.storage_dir)
 
     # Determine what needs to be synced
     # Note: Even if no sessions found, we still need to check for deleted sessions
@@ -727,7 +1069,7 @@ def sync_sessions(
     )
 
     if not sessions and not session_ids_to_delete:
-        logger.info("no_sessions_found", sessions_dir=str(config.paths.sessions_dir))
+        logger.info("no_sessions_found", sessions_dir=log_path)
         return result
 
     if not sessions_to_process and not session_ids_to_delete:
@@ -806,8 +1148,15 @@ def sync_sessions(
             )
 
         try:
-            # Parse session
-            parsed = parse_session(session_info.path)
+            # Parse session - use appropriate parser based on format
+            if use_legacy_format:
+                # Legacy: path is a directory with session.json + messages.json
+                parsed = parse_session(session_info.path)
+            else:
+                # Actual: path is a session JSON file, messages in storage
+                assert storage_dir is not None
+                parsed = parse_session_from_storage(session_info.path, storage_dir)
+
             if parsed is None:
                 logger.warning(
                     "session_parse_failed",

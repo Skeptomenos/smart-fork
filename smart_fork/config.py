@@ -21,10 +21,13 @@ from pydantic import BaseModel, Field
 
 
 # Default paths following XDG Base Directory spec
-# Sessions source (read-only): ~/.local/share/opencode/sessions/
+# OpenCode storage: ~/.local/share/opencode/storage/
+#   - session/<project_hash>/ses_*.json  (metadata)
+#   - message/ses_*/msg_*.json           (message metadata)
+#   - part/msg_*/prt_*.json              (message content)
 # Smart fork data: ~/.local/share/opencode/smart-fork/
 DEFAULT_DATA_DIR = Path.home() / ".local" / "share" / "opencode" / "smart-fork"
-DEFAULT_SESSIONS_DIR = Path.home() / ".local" / "share" / "opencode" / "sessions"
+DEFAULT_STORAGE_DIR = Path.home() / ".local" / "share" / "opencode" / "storage"
 
 
 class EmbeddingConfig(BaseModel):
@@ -199,9 +202,15 @@ class PathsConfig(BaseModel):
 
     All paths support ~ expansion for home directory.
 
+    OpenCode Storage Structure (actual format as of 2026-01):
+    - storage/session/<project_hash>/ses_*.json  (session metadata)
+    - storage/message/ses_*/msg_*.json           (message metadata)
+    - storage/part/msg_*/prt_*.json              (message content)
+
     Attributes:
         data_dir: Root directory for Smart Fork data (LanceDB, config, state).
-        sessions_dir: Directory containing OpenCode session transcripts (read-only).
+        storage_dir: OpenCode storage root containing session/message/part subdirectories.
+        sessions_dir: Legacy path for testing. If set, uses old format (ses_*/session.json).
         lance_dir: Subdirectory under data_dir for LanceDB storage.
         sync_state_file: Filename for sync state JSON.
     """
@@ -210,9 +219,13 @@ class PathsConfig(BaseModel):
         default=DEFAULT_DATA_DIR,
         description="Root directory for Smart Fork data",
     )
-    sessions_dir: Path = Field(
-        default=DEFAULT_SESSIONS_DIR,
-        description="Directory containing OpenCode sessions",
+    storage_dir: Path = Field(
+        default=DEFAULT_STORAGE_DIR,
+        description="OpenCode storage root (session/message/part subdirs)",
+    )
+    sessions_dir: Path | None = Field(
+        default=None,
+        description="Legacy sessions directory for testing (overrides storage_dir)",
     )
     lance_dir: str = Field(
         default="lance",
@@ -237,6 +250,25 @@ class PathsConfig(BaseModel):
     def config_path(self) -> Path:
         """Full path to config JSON file."""
         return self.data_dir / "config.json"
+
+    @property
+    def session_metadata_dir(self) -> Path:
+        """Directory containing session metadata files (storage/session/)."""
+        return self.storage_dir / "session"
+
+    @property
+    def message_dir(self) -> Path:
+        """Directory containing message files (storage/message/)."""
+        return self.storage_dir / "message"
+
+    @property
+    def part_dir(self) -> Path:
+        """Directory containing message part/content files (storage/part/)."""
+        return self.storage_dir / "part"
+
+    def is_legacy_mode(self) -> bool:
+        """Check if using legacy sessions_dir (for testing)."""
+        return self.sessions_dir is not None
 
 
 class SmartForkConfig(BaseModel):

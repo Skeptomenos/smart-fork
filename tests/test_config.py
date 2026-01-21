@@ -127,11 +127,14 @@ class TestPathsConfig:
         assert "opencode" in str(config.data_dir)
         assert "smart-fork" in str(config.data_dir)
 
-    def test_default_sessions_dir(self) -> None:
-        """Sessions dir should point to OpenCode sessions."""
+    def test_default_storage_dir(self) -> None:
+        """Storage dir should point to OpenCode storage."""
         config = PathsConfig()
-        assert "opencode" in str(config.sessions_dir)
-        assert "sessions" in str(config.sessions_dir)
+        assert "opencode" in str(config.storage_dir)
+        assert "storage" in str(config.storage_dir)
+        # Legacy sessions_dir should be None by default
+        assert config.sessions_dir is None
+        assert not config.is_legacy_mode()
 
     def test_lance_path_property(self) -> None:
         """Lance path should be under data_dir."""
