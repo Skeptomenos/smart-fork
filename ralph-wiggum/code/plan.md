@@ -157,9 +157,10 @@ Complete phases sequentially with these priorities within each phase:
             _get_session_has_parent() for chain quality lookup with caching, _create_session_matches() updated to use
             composite scoring with db and config context; 29 new tests in test_scoring.py (333 total)
 
-- [ ] **Task 5.3**: Add session grouping and result formatting
+- [x] **Task 5.3**: Add session grouping and result formatting
       Files: `smart_fork/query.py` (extend)
       Test: Groups chunks by session_id, returns top-5 SessionMatch with best_snippet
+      Impl: Already implemented - _group_chunks_by_session() groups chunks, _create_session_matches() returns top-N SessionMatch with best_snippet truncated to ~200 chars; 12 dedicated tests in test_query.py (TestSessionGrouping, TestResultFormatting classes)
 
 ## Phase 6: CLI Interface (Tasks 6.1-6.5)
 
@@ -319,12 +320,12 @@ Differences between spec and plan (resolved):
 | 2. Embedding | Complete | 5/5 | Yes |
 | 3. Storage | Complete | 3/3 | Yes |
 | 4. Ingestion | Complete | 4/4 | Yes |
-| 5. Query | In Progress | 2/3 | Yes |
+| 5. Query | Complete | 3/3 | Yes |
 | 6. CLI | Not Started | 0/5 | Yes |
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 19/31 tasks complete (19/27 MVP tasks)
+**Total**: 20/31 tasks complete (20/27 MVP tasks)
 
 ---
 
@@ -368,3 +369,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 4.4 completed: Incremental sync already implemented in Task 4.3 - get_sessions_to_sync() compares timestamps, sync_sessions(force=True) re-indexes all, 8 tests for incremental/force, Phase 4 complete |
 | 2026-01-21 | Task 5.1 completed: query.py with search_sessions(), embed_query(), QueryResult/SessionChunkGroup dataclasses, EmptyQueryError/QueryError exceptions, 29 tests (304 total) |
 | 2026-01-21 | Task 5.2 completed: compute_session_score() with 5 weighted components (best_sim 40%, avg_sim 20%, chunk_ratio 5%, recency 25%, chain_quality 10%), compute_recency_score() with exponential decay (30-day half-life), _get_session_has_parent() with caching, 29 new tests in test_scoring.py (333 total) |
+| 2026-01-21 | Task 5.3 completed: Already implemented - _group_chunks_by_session() groups chunks by session_id, _create_session_matches() returns top-N SessionMatch with best_snippet (truncated to ~200 chars), 12 tests in TestSessionGrouping and TestResultFormatting classes, Phase 5 complete |
