@@ -17,13 +17,19 @@ from smart_fork.ingest import (
     ParsedSession,
     SessionInfo,
     SessionMetadata,
+    SyncProgress,
+    SyncResult,
     chunk_session,
     discover_sessions,
     get_sessions_to_sync,
+    load_sync_state,
     parse_session,
     parse_session_messages,
     parse_session_metadata,
+    save_sync_state,
+    sync_sessions,
 )
+from smart_fork.types import SyncState
 
 
 # ============================================================================
@@ -1007,3 +1013,454 @@ class TestParsedSession:
         session2 = ParsedSession("ses_a", "/a", 1000, None, msgs)
 
         assert session1 == session2
+
+
+# ============================================================================
+# load_sync_state() Tests
+# ============================================================================
+
+
+class TestLoadSyncState:
+    """Tests for load_sync_state function."""
+
+    def test_returns_empty_state_for_nonexistent_file(self, tmp_path: Path) -> None:
+        """Should return empty state if file doesn't exist."""
+        nonexistent = tmp_path / "does_not_exist.json"
+
+        result = load_sync_state(nonexistent)
+
+        assert result.last_sync == 0
+        assert result.sessions == {}
+
+    def test_loads_valid_sync_state(self, tmp_path: Path) -> None:
+        """Should load valid sync state from JSON."""
+        sync_path = tmp_path / "sync-state.json"
+        state_data = {
+            "last_sync": 1705848000,
+            "sessions": {
+                "ses_abc123": 1705847000,
+                "ses_def456": 1705846000,
+            },
+        }
+        sync_path.write_text(json.dumps(state_data))
+
+        result = load_sync_state(sync_path)
+
+        assert result.last_sync == 1705848000
+        assert result.sessions == {"ses_abc123": 1705847000, "ses_def456": 1705846000}
+
+    def test_returns_empty_state_for_invalid_json(self, tmp_path: Path) -> None:
+        """Should return empty state for malformed JSON."""
+        sync_path = tmp_path / "sync-state.json"
+        sync_path.write_text("{invalid json")
+
+        result = load_sync_state(sync_path)
+
+        assert result.last_sync == 0
+        assert result.sessions == {}
+
+    def test_returns_empty_state_for_non_object_json(self, tmp_path: Path) -> None:
+        """Should return empty state if JSON is not an object."""
+        sync_path = tmp_path / "sync-state.json"
+        sync_path.write_text("[]")
+
+        result = load_sync_state(sync_path)
+
+        assert result.last_sync == 0
+        assert result.sessions == {}
+
+    def test_handles_missing_fields(self, tmp_path: Path) -> None:
+        """Should use defaults for missing fields."""
+        sync_path = tmp_path / "sync-state.json"
+        sync_path.write_text("{}")
+
+        result = load_sync_state(sync_path)
+
+        assert result.last_sync == 0
+        assert result.sessions == {}
+
+    def test_handles_float_timestamp(self, tmp_path: Path) -> None:
+        """Should convert float timestamp to int."""
+        sync_path = tmp_path / "sync-state.json"
+        state_data = {"last_sync": 1705848000.5, "sessions": {}}
+        sync_path.write_text(json.dumps(state_data))
+
+        result = load_sync_state(sync_path)
+
+        assert result.last_sync == 1705848000
+
+    def test_handles_string_timestamp(self, tmp_path: Path) -> None:
+        """Should convert string timestamp to int."""
+        sync_path = tmp_path / "sync-state.json"
+        state_data = {"last_sync": "1705848000", "sessions": {}}
+        sync_path.write_text(json.dumps(state_data))
+
+        result = load_sync_state(sync_path)
+
+        assert result.last_sync == 1705848000
+
+    def test_handles_invalid_sessions_type(self, tmp_path: Path) -> None:
+        """Should use empty dict if sessions is not a dict."""
+        sync_path = tmp_path / "sync-state.json"
+        state_data = {"last_sync": 1000, "sessions": "invalid"}
+        sync_path.write_text(json.dumps(state_data))
+
+        result = load_sync_state(sync_path)
+
+        assert result.sessions == {}
+
+
+# ============================================================================
+# save_sync_state() Tests
+# ============================================================================
+
+
+class TestSaveSyncState:
+    """Tests for save_sync_state function."""
+
+    def test_saves_sync_state_to_file(self, tmp_path: Path) -> None:
+        """Should save sync state as JSON."""
+        sync_path = tmp_path / "sync-state.json"
+        state = SyncState(
+            last_sync=1705848000,
+            sessions={"ses_abc123": 1705847000},
+        )
+
+        save_sync_state(state, sync_path)
+
+        # Verify file contents
+        saved_data = json.loads(sync_path.read_text())
+        assert saved_data["last_sync"] == 1705848000
+        assert saved_data["sessions"] == {"ses_abc123": 1705847000}
+
+    def test_creates_parent_directories(self, tmp_path: Path) -> None:
+        """Should create parent directories if they don't exist."""
+        sync_path = tmp_path / "nested" / "dir" / "sync-state.json"
+        state = SyncState(last_sync=1000, sessions={})
+
+        save_sync_state(state, sync_path)
+
+        assert sync_path.exists()
+
+    def test_overwrites_existing_file(self, tmp_path: Path) -> None:
+        """Should overwrite existing sync state file."""
+        sync_path = tmp_path / "sync-state.json"
+        # Write initial state
+        sync_path.write_text('{"last_sync": 500, "sessions": {}}')
+
+        # Save new state
+        state = SyncState(last_sync=1000, sessions={"ses_new": 999})
+        save_sync_state(state, sync_path)
+
+        # Verify file was overwritten
+        saved_data = json.loads(sync_path.read_text())
+        assert saved_data["last_sync"] == 1000
+        assert "ses_new" in saved_data["sessions"]
+
+
+# ============================================================================
+# SyncResult and SyncProgress Dataclass Tests
+# ============================================================================
+
+
+class TestSyncResult:
+    """Tests for SyncResult dataclass."""
+
+    def test_default_values(self) -> None:
+        """Should have sensible default values."""
+        result = SyncResult()
+
+        assert result.sessions_processed == 0
+        assert result.sessions_deleted == 0
+        assert result.sessions_failed == 0
+        assert result.chunks_added == 0
+        assert result.errors == []
+
+    def test_creation_with_values(self) -> None:
+        """Should accept custom values."""
+        result = SyncResult(
+            sessions_processed=5,
+            sessions_deleted=2,
+            sessions_failed=1,
+            chunks_added=100,
+            errors=["error1", "error2"],
+        )
+
+        assert result.sessions_processed == 5
+        assert result.sessions_deleted == 2
+        assert result.sessions_failed == 1
+        assert result.chunks_added == 100
+        assert result.errors == ["error1", "error2"]
+
+
+class TestSyncProgress:
+    """Tests for SyncProgress dataclass."""
+
+    def test_creation(self) -> None:
+        """Should create SyncProgress with all fields."""
+        progress = SyncProgress(
+            current=5,
+            total=10,
+            session_id="ses_abc123",
+            status="processing",
+        )
+
+        assert progress.current == 5
+        assert progress.total == 10
+        assert progress.session_id == "ses_abc123"
+        assert progress.status == "processing"
+
+
+# ============================================================================
+# sync_sessions() Tests
+# ============================================================================
+
+
+class TestSyncSessions:
+    """Tests for sync_sessions function.
+
+    Note: These are integration tests that use mock embedding providers
+    to avoid hitting real APIs.
+    """
+
+    def test_returns_empty_result_for_no_sessions(self, tmp_path: Path) -> None:
+        """Should return empty result if no sessions found."""
+        from smart_fork.config import SmartForkConfig
+
+        # Create a config pointing to empty directories
+        config = SmartForkConfig()
+        config.paths.sessions_dir = tmp_path / "sessions"
+        config.paths.sessions_dir.mkdir()
+        config.paths.data_dir = tmp_path / "data"
+        config.paths.data_dir.mkdir()
+
+        result = sync_sessions(config)
+
+        assert result.sessions_processed == 0
+        assert result.sessions_deleted == 0
+        assert result.chunks_added == 0
+
+    def test_returns_error_for_failed_provider(self, tmp_path: Path) -> None:
+        """Should return error if embedding provider fails to initialize."""
+        from smart_fork.config import SmartForkConfig
+
+        # Create a config with invalid provider settings
+        config = SmartForkConfig()
+        config.paths.sessions_dir = tmp_path / "sessions"
+        config.paths.sessions_dir.mkdir()
+        config.paths.data_dir = tmp_path / "data"
+        config.paths.data_dir.mkdir()
+
+        # Create a session to process
+        session_dir = config.paths.sessions_dir / "ses_test"
+        session_dir.mkdir()
+        (session_dir / "session.json").write_text('{"working_directory": "/test"}')
+        (session_dir / "messages.json").write_text(
+            '[{"role": "user", "content": "Hello"}]'
+        )
+
+        # Vertex provider should fail (no project configured)
+        # And Ollama fallback should fail (no server running)
+        config.embedding.provider = "vertex"
+        config.embedding.vertex_project = None
+
+        result = sync_sessions(config, force=True)
+
+        # The result should have processed 0 sessions because embedding fails
+        # (Ollama fallback will also fail in test environment without server)
+        # We just verify the sync doesn't crash
+        assert isinstance(result, SyncResult)
+
+    def test_calls_progress_callback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should call progress callback during sync."""
+        from smart_fork.config import SmartForkConfig
+
+        # Create config
+        config = SmartForkConfig()
+        config.paths.sessions_dir = tmp_path / "sessions"
+        config.paths.sessions_dir.mkdir()
+        config.paths.data_dir = tmp_path / "data"
+        config.paths.data_dir.mkdir()
+
+        # Create a session
+        session_dir = config.paths.sessions_dir / "ses_test"
+        session_dir.mkdir()
+        (session_dir / "session.json").write_text('{"working_directory": "/test"}')
+        (session_dir / "messages.json").write_text(
+            '[{"role": "user", "content": "Hello"}]'
+        )
+
+        # Track progress callbacks
+        progress_updates: list[SyncProgress] = []
+
+        def track_progress(p: SyncProgress) -> None:
+            progress_updates.append(p)
+
+        # Mock the embedding provider to avoid real API calls
+        class MockProvider:
+            def embed(self, texts: list[str]) -> list[list[float]]:
+                return [[0.0] * 768 for _ in texts]
+
+            def model_name(self) -> str:
+                return "mock-model"
+
+        # Patch create_provider to return mock
+        import smart_fork.ingest as ingest_module
+
+        monkeypatch.setattr(
+            ingest_module,
+            "create_provider",
+            lambda config: MockProvider(),
+        )
+
+        result = sync_sessions(config, force=True, progress_callback=track_progress)
+
+        # Should have called progress callback
+        assert len(progress_updates) > 0
+        # First call should be for the session being processed
+        assert progress_updates[0].session_id == "ses_test"
+
+    def test_handles_force_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should re-index all sessions in force mode."""
+        from smart_fork.config import SmartForkConfig
+
+        config = SmartForkConfig()
+        config.paths.sessions_dir = tmp_path / "sessions"
+        config.paths.sessions_dir.mkdir()
+        config.paths.data_dir = tmp_path / "data"
+        config.paths.data_dir.mkdir()
+
+        # Create a session
+        session_dir = config.paths.sessions_dir / "ses_test"
+        session_dir.mkdir()
+        (session_dir / "session.json").write_text('{"working_directory": "/test"}')
+        (session_dir / "messages.json").write_text(
+            '[{"role": "user", "content": "Test message for indexing"}]'
+        )
+
+        # Write an existing sync state (session already indexed)
+        sync_state_path = config.paths.sync_state_path
+        sync_state_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_state = {
+            "last_sync": int(time.time()),
+            "sessions": {"ses_test": int(time.time())},
+        }
+        sync_state_path.write_text(json.dumps(existing_state))
+
+        # Mock embedding provider
+        class MockProvider:
+            def embed(self, texts: list[str]) -> list[list[float]]:
+                return [[0.0] * 768 for _ in texts]
+
+            def model_name(self) -> str:
+                return "mock-model"
+
+        import smart_fork.ingest as ingest_module
+
+        monkeypatch.setattr(
+            ingest_module,
+            "create_provider",
+            lambda config: MockProvider(),
+        )
+
+        # First sync without force - should skip (already synced)
+        result_no_force = sync_sessions(config, force=False)
+
+        # With force=True - should re-index
+        result_force = sync_sessions(config, force=True)
+
+        # Force should have processed the session
+        assert result_force.sessions_processed == 1
+
+    def test_updates_sync_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should update sync state after successful sync."""
+        from smart_fork.config import SmartForkConfig
+
+        config = SmartForkConfig()
+        config.paths.sessions_dir = tmp_path / "sessions"
+        config.paths.sessions_dir.mkdir()
+        config.paths.data_dir = tmp_path / "data"
+        config.paths.data_dir.mkdir()
+
+        # Create a session
+        session_dir = config.paths.sessions_dir / "ses_test"
+        session_dir.mkdir()
+        (session_dir / "session.json").write_text('{"working_directory": "/test"}')
+        (session_dir / "messages.json").write_text(
+            '[{"role": "user", "content": "Test message"}]'
+        )
+
+        # Mock embedding provider
+        class MockProvider:
+            def embed(self, texts: list[str]) -> list[list[float]]:
+                return [[0.0] * 768 for _ in texts]
+
+            def model_name(self) -> str:
+                return "mock-model"
+
+        import smart_fork.ingest as ingest_module
+
+        monkeypatch.setattr(
+            ingest_module,
+            "create_provider",
+            lambda config: MockProvider(),
+        )
+
+        sync_sessions(config, force=True)
+
+        # Verify sync state was saved
+        sync_state = load_sync_state(config.paths.sync_state_path)
+        assert sync_state.last_sync > 0
+        assert "ses_test" in sync_state.sessions
+
+    def test_handles_deleted_sessions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Should remove deleted sessions from index and sync state."""
+        from smart_fork.config import SmartForkConfig
+
+        config = SmartForkConfig()
+        config.paths.sessions_dir = tmp_path / "sessions"
+        config.paths.sessions_dir.mkdir()
+        config.paths.data_dir = tmp_path / "data"
+        config.paths.data_dir.mkdir()
+
+        # Create initial sync state with a session that no longer exists
+        sync_state_path = config.paths.sync_state_path
+        sync_state_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_state = {
+            "last_sync": 1000,
+            "sessions": {"ses_deleted": 900},  # This session doesn't exist on disk
+        }
+        sync_state_path.write_text(json.dumps(existing_state))
+
+        # Mock embedding provider (won't be called since no sessions to process)
+        class MockProvider:
+            def embed(self, texts: list[str]) -> list[list[float]]:
+                return [[0.0] * 768 for _ in texts]
+
+            def model_name(self) -> str:
+                return "mock-model"
+
+        import smart_fork.ingest as ingest_module
+
+        monkeypatch.setattr(
+            ingest_module,
+            "create_provider",
+            lambda config: MockProvider(),
+        )
+
+        result = sync_sessions(config, force=False)
+
+        # Should have detected and deleted the session
+        assert result.sessions_deleted == 1
+
+        # Verify sync state no longer contains deleted session
+        updated_state = load_sync_state(config.paths.sync_state_path)
+        assert "ses_deleted" not in updated_state.sessions

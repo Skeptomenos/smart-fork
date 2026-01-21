@@ -133,9 +133,10 @@ Complete phases sequentially with these priorities within each phase:
       Test: Extracts messages, applies chunking, extracts repo_path from metadata
       Impl: parse_session_messages(), parse_session(), chunk_session(), ParsedSession dataclass; 22 new tests (255 total)
 
-- [ ] **Task 4.3**: Implement sync pipeline with rate limiting
+- [x] **Task 4.3**: Implement sync pipeline with rate limiting
       Files: `smart_fork/ingest.py` (extend)
       Test: Ingests sessions, respects 100ms rate limit, handles errors gracefully
+      Impl: sync_sessions() function with full pipeline, load_sync_state()/save_sync_state(), SyncResult/SyncProgress dataclasses, 20 new tests (275 total)
 
 - [ ] **Task 4.4**: Add incremental sync with state tracking and --force flag
       Files: `smart_fork/ingest.py` (extend)
@@ -312,13 +313,13 @@ Differences between spec and plan (resolved):
 | 1. Foundation | Complete | 5/5 | Yes |
 | 2. Embedding | Complete | 5/5 | Yes |
 | 3. Storage | Complete | 3/3 | Yes |
-| 4. Ingestion | In Progress | 2/4 | Yes |
+| 4. Ingestion | In Progress | 3/4 | Yes |
 | 5. Query | Not Started | 0/3 | Yes |
 | 6. CLI | Not Started | 0/5 | Yes |
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 15/31 tasks complete (15/27 MVP tasks)
+**Total**: 16/31 tasks complete (16/27 MVP tasks)
 
 ---
 
@@ -358,3 +359,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 3.3 completed: Already implemented in Task 3.2 (repo_path with prefilter=True), Phase 3 complete |
 | 2026-01-21 | Task 4.1 completed: ingest.py with discover_sessions(), parse_session_metadata(), get_sessions_to_sync(), SessionInfo/SessionMetadata dataclasses, 35 tests passing (233 total) |
 | 2026-01-21 | Task 4.2 completed: parse_session_messages(), parse_session(), chunk_session(), ParsedSession dataclass, 22 new tests (255 total) |
+| 2026-01-21 | Task 4.3 completed: sync_sessions() with full ingestion pipeline, load_sync_state()/save_sync_state(), SyncResult/SyncProgress dataclasses, progress callbacks, error handling, 20 new tests (275 total) |

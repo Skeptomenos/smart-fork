@@ -18,14 +18,18 @@ Why session discovery is a separate concern:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Callable
 
 import structlog
 
 from smart_fork.chunker import Chunk, Chunker, chunk_messages
-from smart_fork.config import ChunkingConfig, SmartForkConfig
-from smart_fork.types import SessionChunk
+from smart_fork.config import ChunkingConfig, SmartForkConfig, load_config
+from smart_fork.db import ChunkDatabase, DatabaseError
+from smart_fork.embeddings import EmbeddingError, EmbeddingProvider, create_provider
+from smart_fork.types import SessionChunk, SyncState
 
 
 logger = structlog.get_logger(__name__)
@@ -550,3 +554,384 @@ def chunk_session(
     )
 
     return session_chunks
+
+
+def load_sync_state(sync_state_path: Path) -> SyncState:
+    """Load sync state from JSON file.
+
+    Args:
+        sync_state_path: Path to the sync state JSON file.
+
+    Returns:
+        SyncState object. Returns empty state if file doesn't exist or is invalid.
+    """
+    sync_state_path = sync_state_path.expanduser()
+
+    if not sync_state_path.exists():
+        logger.info("sync_state_not_found", path=str(sync_state_path))
+        return SyncState(last_sync=0, sessions={})
+
+    try:
+        with open(sync_state_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        logger.warning(
+            "sync_state_invalid_json", path=str(sync_state_path), error=str(e)
+        )
+        return SyncState(last_sync=0, sessions={})
+    except OSError as e:
+        logger.warning("sync_state_read_error", path=str(sync_state_path), error=str(e))
+        return SyncState(last_sync=0, sessions={})
+
+    if not isinstance(data, dict):
+        logger.warning(
+            "sync_state_not_object",
+            path=str(sync_state_path),
+            actual_type=type(data).__name__,
+        )
+        return SyncState(last_sync=0, sessions={})
+
+    last_sync = data.get("last_sync", 0)
+    if not isinstance(last_sync, int):
+        last_sync = int(last_sync) if isinstance(last_sync, (float, str)) else 0
+
+    sessions = data.get("sessions", {})
+    if not isinstance(sessions, dict):
+        sessions = {}
+
+    return SyncState(last_sync=last_sync, sessions=sessions)
+
+
+def save_sync_state(sync_state: SyncState, sync_state_path: Path) -> None:
+    """Save sync state to JSON file.
+
+    Creates parent directories if they don't exist.
+
+    Args:
+        sync_state: The sync state to save.
+        sync_state_path: Path to the sync state JSON file.
+
+    Raises:
+        OSError: If the file cannot be written.
+    """
+    sync_state_path = sync_state_path.expanduser()
+    sync_state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    data = asdict(sync_state)
+    with open(sync_state_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+    logger.info(
+        "sync_state_saved",
+        path=str(sync_state_path),
+        session_count=len(sync_state.sessions),
+    )
+
+
+@dataclass
+class SyncResult:
+    """Result of a sync operation.
+
+    Attributes:
+        sessions_processed: Number of sessions successfully processed.
+        sessions_deleted: Number of sessions deleted from index.
+        sessions_failed: Number of sessions that failed to process.
+        chunks_added: Total number of chunks added to the database.
+        errors: List of error messages for failed sessions.
+    """
+
+    sessions_processed: int = 0
+    sessions_deleted: int = 0
+    sessions_failed: int = 0
+    chunks_added: int = 0
+    errors: list[str] | None = None
+
+    def __post_init__(self) -> None:
+        if self.errors is None:
+            self.errors = []
+
+
+@dataclass
+class SyncProgress:
+    """Progress update during sync.
+
+    Attributes:
+        current: Current session index (0-based).
+        total: Total number of sessions to process.
+        session_id: ID of the session being processed.
+        status: Current status ("processing", "success", "failed", "deleted").
+    """
+
+    current: int
+    total: int
+    session_id: str
+    status: str
+
+
+def sync_sessions(
+    config: SmartForkConfig | None = None,
+    *,
+    force: bool = False,
+    progress_callback: Callable[[SyncProgress], None] | None = None,
+) -> SyncResult:
+    """Run the full sync pipeline to index sessions.
+
+    This is the main entry point for ingesting sessions into the vector database.
+    It handles the complete pipeline:
+    1. Load configuration and sync state
+    2. Discover sessions from the sessions directory
+    3. Determine which sessions are new/modified/deleted
+    4. Delete removed sessions from the index
+    5. For each session to process: parse → chunk → embed → store
+    6. Save updated sync state
+
+    Error handling:
+    - Individual session failures don't stop the sync
+    - Errors are collected and returned in SyncResult
+    - Sync state is updated progressively so partial syncs can resume
+
+    Rate limiting:
+    - Embedding API calls respect config.embedding.rate_limit_ms between batches
+    - This is handled internally by the embedding provider
+
+    Args:
+        config: Optional SmartForkConfig. If None, loads from default path.
+        force: If True, re-index all sessions regardless of sync state.
+        progress_callback: Optional callback for progress updates.
+
+    Returns:
+        SyncResult with counts of processed/deleted/failed sessions.
+
+    Example:
+        >>> from smart_fork.config import load_config
+        >>> config = load_config()
+        >>> result = sync_sessions(config)
+        >>> print(f"Processed {result.sessions_processed} sessions")
+    """
+    # Load config if not provided
+    if config is None:
+        config = load_config()
+
+    result = SyncResult()
+
+    # Load sync state
+    sync_state = load_sync_state(config.paths.sync_state_path)
+
+    # Discover sessions
+    sessions = discover_sessions(config.paths.sessions_dir)
+
+    # Determine what needs to be synced
+    # Note: Even if no sessions found, we still need to check for deleted sessions
+    sessions_to_process, session_ids_to_delete = get_sessions_to_sync(
+        sessions, sync_state.sessions, force
+    )
+
+    if not sessions and not session_ids_to_delete:
+        logger.info("no_sessions_found", sessions_dir=str(config.paths.sessions_dir))
+        return result
+
+    if not sessions_to_process and not session_ids_to_delete:
+        logger.info("nothing_to_sync")
+        return result
+
+    # Open database
+    try:
+        db = ChunkDatabase.open(config.paths.lance_path)
+    except DatabaseError as e:
+        logger.error("database_open_failed", error=str(e))
+        result.errors = [f"Failed to open database: {e}"]
+        return result
+
+    # Create embedding provider
+    try:
+        provider = create_provider(config.embedding)
+        model_name = provider.model_name()
+        logger.info("embedding_provider_created", model=model_name)
+    except EmbeddingError as e:
+        logger.error("embedding_provider_failed", error=str(e))
+        result.errors = [f"Failed to create embedding provider: {e}"]
+        db.close()
+        return result
+
+    # Handle force mode: drop existing table to start fresh
+    if force:
+        try:
+            dropped = db.drop_table()
+            if dropped:
+                logger.info("table_dropped_for_force_sync")
+        except DatabaseError as e:
+            logger.warning("table_drop_failed", error=str(e))
+
+    # Delete removed sessions
+    for session_id in session_ids_to_delete:
+        if progress_callback:
+            progress_callback(
+                SyncProgress(
+                    current=result.sessions_deleted,
+                    total=len(session_ids_to_delete),
+                    session_id=session_id,
+                    status="deleted",
+                )
+            )
+        try:
+            deleted_count = db.delete_by_session(session_id)
+            logger.debug(
+                "session_deleted",
+                session_id=session_id,
+                chunks_deleted=deleted_count,
+            )
+            # Remove from sync state
+            sync_state.sessions.pop(session_id, None)
+            result.sessions_deleted += 1
+        except DatabaseError as e:
+            logger.warning(
+                "session_delete_failed",
+                session_id=session_id,
+                error=str(e),
+            )
+
+    # Process sessions
+    total_to_process = len(sessions_to_process)
+    for i, session_info in enumerate(sessions_to_process):
+        session_id = session_info.session_id
+
+        if progress_callback:
+            progress_callback(
+                SyncProgress(
+                    current=i,
+                    total=total_to_process,
+                    session_id=session_id,
+                    status="processing",
+                )
+            )
+
+        try:
+            # Parse session
+            parsed = parse_session(session_info.path)
+            if parsed is None:
+                logger.warning(
+                    "session_parse_failed",
+                    session_id=session_id,
+                )
+                result.sessions_failed += 1
+                if result.errors is not None:
+                    result.errors.append(f"{session_id}: Failed to parse session")
+                continue
+
+            # Chunk session
+            chunks = chunk_session(parsed, model_name, config.chunking)
+            if not chunks:
+                # Session has no content (empty messages)
+                logger.debug(
+                    "session_has_no_chunks",
+                    session_id=session_id,
+                )
+                # Still mark as synced to avoid re-processing
+                sync_state.sessions[session_id] = session_info.last_modified
+                continue
+
+            # Generate embeddings for all chunks
+            try:
+                chunk_texts = [c.chunk_text for c in chunks]
+                embeddings = provider.embed(chunk_texts)
+
+                # Fill in embeddings
+                for chunk, embedding in zip(chunks, embeddings, strict=True):
+                    # Create new chunk with embedding (SessionChunk is immutable-ish)
+                    chunk.embedding = embedding
+
+            except EmbeddingError as e:
+                logger.warning(
+                    "session_embedding_failed",
+                    session_id=session_id,
+                    error=str(e),
+                )
+                result.sessions_failed += 1
+                if result.errors is not None:
+                    result.errors.append(f"{session_id}: Embedding failed: {e}")
+                continue
+
+            # Delete old chunks for this session (in case of re-index)
+            try:
+                db.delete_by_session(session_id)
+            except DatabaseError:
+                pass  # Ignore - table may not exist yet
+
+            # Add new chunks to database
+            try:
+                added = db.add_chunks(chunks)
+                result.chunks_added += added
+            except DatabaseError as e:
+                logger.warning(
+                    "session_store_failed",
+                    session_id=session_id,
+                    error=str(e),
+                )
+                result.sessions_failed += 1
+                if result.errors is not None:
+                    result.errors.append(f"{session_id}: Storage failed: {e}")
+                continue
+
+            # Update sync state
+            sync_state.sessions[session_id] = session_info.last_modified
+            result.sessions_processed += 1
+
+            if progress_callback:
+                progress_callback(
+                    SyncProgress(
+                        current=i + 1,
+                        total=total_to_process,
+                        session_id=session_id,
+                        status="success",
+                    )
+                )
+
+            logger.debug(
+                "session_indexed",
+                session_id=session_id,
+                chunks=len(chunks),
+            )
+
+        except Exception as e:
+            # Catch-all for unexpected errors
+            logger.error(
+                "session_unexpected_error",
+                session_id=session_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            result.sessions_failed += 1
+            if result.errors is not None:
+                result.errors.append(f"{session_id}: Unexpected error: {e}")
+
+            if progress_callback:
+                progress_callback(
+                    SyncProgress(
+                        current=i + 1,
+                        total=total_to_process,
+                        session_id=session_id,
+                        status="failed",
+                    )
+                )
+
+    # Save sync state
+    sync_state.last_sync = int(time.time())
+    try:
+        save_sync_state(sync_state, config.paths.sync_state_path)
+    except OSError as e:
+        logger.error("sync_state_save_failed", error=str(e))
+        if result.errors is not None:
+            result.errors.append(f"Failed to save sync state: {e}")
+
+    # Close database
+    db.close()
+
+    logger.info(
+        "sync_complete",
+        sessions_processed=result.sessions_processed,
+        sessions_deleted=result.sessions_deleted,
+        sessions_failed=result.sessions_failed,
+        chunks_added=result.chunks_added,
+    )
+
+    return result
