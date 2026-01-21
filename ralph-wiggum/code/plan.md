@@ -123,9 +123,10 @@ Complete phases sequentially with these priorities within each phase:
 
 ## Phase 4: Ingestion Pipeline (Tasks 4.1-4.4)
 
-- [ ] **Task 4.1**: Implement session discovery from OpenCode directory
-      Files: `smart_fork/ingest.py`
+- [x] **Task 4.1**: Implement session discovery from OpenCode directory
+      Files: `smart_fork/ingest.py`, `tests/test_ingest.py`
       Test: Finds all session directories in `~/.local/share/opencode/sessions/`
+      Impl: discover_sessions(), parse_session_metadata(), get_sessions_to_sync(), SessionInfo/SessionMetadata dataclasses, 35 tests passing (233 total)
 
 - [ ] **Task 4.2**: Parse session transcripts into chunks
       Files: `smart_fork/ingest.py` (extend), `tests/test_ingestion.py`
@@ -310,13 +311,13 @@ Differences between spec and plan (resolved):
 | 1. Foundation | Complete | 5/5 | Yes |
 | 2. Embedding | Complete | 5/5 | Yes |
 | 3. Storage | Complete | 3/3 | Yes |
-| 4. Ingestion | Not Started | 0/4 | Yes |
+| 4. Ingestion | In Progress | 1/4 | Yes |
 | 5. Query | Not Started | 0/3 | Yes |
 | 6. CLI | Not Started | 0/5 | Yes |
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 13/31 tasks complete (13/27 MVP tasks)
+**Total**: 14/31 tasks complete (14/27 MVP tasks)
 
 ---
 
@@ -354,3 +355,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 3.1 completed: db.py with ChunkDatabase class, Arrow schema for 768-dim vectors, CRUD operations, 32 tests passing (183 total) |
 | 2026-01-21 | Task 3.2 completed: search() with ANN query, L2→similarity conversion, repo_path prefilter, ChunkMatch dataclass, get_session_chunk_count(), 15 new tests (198 total) |
 | 2026-01-21 | Task 3.3 completed: Already implemented in Task 3.2 (repo_path with prefilter=True), Phase 3 complete |
+| 2026-01-21 | Task 4.1 completed: ingest.py with discover_sessions(), parse_session_metadata(), get_sessions_to_sync(), SessionInfo/SessionMetadata dataclasses, 35 tests passing (233 total) |
