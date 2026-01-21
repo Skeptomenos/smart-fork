@@ -67,7 +67,7 @@ Complete phases sequentially with these priorities within each phase:
       Files: `smart_fork/config.py`, `tests/test_config.py`
       Test: Config loads from file, falls back to defaults, validates with Pydantic
 
-- [ ] **Task 1.4**: Implement token-based chunker with tiktoken
+- [x] **Task 1.4**: Implement token-based chunker with tiktoken
       Files: `smart_fork/chunker.py`, `tests/test_chunker.py`
       Test: Chunker splits text at 512-1024 tokens with 50-token overlap
 
@@ -299,7 +299,7 @@ Differences between spec and plan (resolved):
 
 | Phase | Status | Tasks Done | MVP? |
 |-------|--------|------------|------|
-| 1. Foundation | In Progress | 3/5 | Yes |
+| 1. Foundation | In Progress | 4/5 | Yes |
 | 2. Embedding | Not Started | 0/5 | Yes |
 | 3. Storage | Not Started | 0/3 | Yes |
 | 4. Ingestion | Not Started | 0/4 | Yes |
@@ -308,7 +308,7 @@ Differences between spec and plan (resolved):
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 3/31 tasks complete (3/27 MVP tasks)
+**Total**: 4/31 tasks complete (4/27 MVP tasks)
 
 ---
 
@@ -336,3 +336,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 1.1 completed: pyproject.toml, smart_fork/__init__.py, cli.py stub, tests/__init__.py |
 | 2026-01-21 | Task 1.2 completed: types.py with SessionChunk, SessionMatch, SyncState dataclasses |
 | 2026-01-21 | Task 1.3 completed: config.py with Pydantic models, JSON override, 32 tests passing |
+| 2026-01-21 | Task 1.4 completed: chunker.py with token-based chunking, break point detection, 35 tests passing |
