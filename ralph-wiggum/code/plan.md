@@ -77,7 +77,7 @@ Complete phases sequentially with these priorities within each phase:
 
 ## Phase 2: Embedding Layer (Tasks 2.1-2.5)
 
-- [ ] **Task 2.1**: Create EmbeddingProvider abstract base class
+- [x] **Task 2.1**: Create EmbeddingProvider abstract base class
       Files: `smart_fork/embeddings.py`
       Test: ABC defined with embed() and model_name() method signatures
       Note: All providers in single embeddings.py file (flat structure per AGENTS.md)
@@ -300,7 +300,7 @@ Differences between spec and plan (resolved):
 | Phase | Status | Tasks Done | MVP? |
 |-------|--------|------------|------|
 | 1. Foundation | Complete | 5/5 | Yes |
-| 2. Embedding | Not Started | 0/5 | Yes |
+| 2. Embedding | In Progress | 1/5 | Yes |
 | 3. Storage | Not Started | 0/3 | Yes |
 | 4. Ingestion | Not Started | 0/4 | Yes |
 | 5. Query | Not Started | 0/3 | Yes |
@@ -308,7 +308,7 @@ Differences between spec and plan (resolved):
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 5/31 tasks complete (5/27 MVP tasks)
+**Total**: 6/31 tasks complete (6/27 MVP tasks)
 
 ---
 
@@ -338,3 +338,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 1.3 completed: config.py with Pydantic models, JSON override, 32 tests passing |
 | 2026-01-21 | Task 1.4 completed: chunker.py with token-based chunking, break point detection, 35 tests passing |
 | 2026-01-21 | Task 1.5 completed: logging.py with structlog configuration, context binding, JSON output, 24 tests passing (91 total) |
+| 2026-01-21 | Task 2.1 completed: embeddings.py with EmbeddingProvider ABC and EmbeddingError exception class, mypy --strict passes |
