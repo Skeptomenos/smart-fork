@@ -205,10 +205,13 @@ Complete phases sequentially with these priorities within each phase:
       Test: Command appears in OpenCode, invokes smart-fork, formats results as table
       Note: See spec section 9.1 for command content template
 
-- [ ] **Task 7.2**: Create detect-fork agent skill (US-006)
+- [x] **Task 7.2**: Create detect-fork agent skill (US-006)
       Files: `~/.config/opencode/skills/detect-fork/SKILL.md`
       Test: Agent can invoke skill proactively, returns formatted results
       Note: See USAGE.md for full skill definition
+      Impl: Full skill with YAML frontmatter (name, description), trigger conditions, usage instructions,
+            CLI commands, scoring weights table, scopes documentation, output format, example interaction,
+            and troubleshooting guide; Phase 7 complete, all MVP tasks done (27/27)
 
 ## Phase 8: Quality Assurance (Tasks 8.1-8.4)
 
@@ -334,10 +337,10 @@ Differences between spec and plan (resolved):
 | 4. Ingestion | Complete | 4/4 | Yes |
 | 5. Query | Complete | 3/3 | Yes |
 | 6. CLI | Complete | 5/5 | Yes |
-| 7. OpenCode | In Progress | 1/2 | Yes |
+| 7. OpenCode | Complete | 2/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 26/31 tasks complete (26/27 MVP tasks)
+**Total**: 27/31 tasks complete (27/27 MVP tasks - all must-have requirements satisfied)
 
 > **Note**: Tasks 6.2-6.5 consolidated - search command, table output, fork command output, and error handling implemented together as tightly coupled functionality. Phase 6 complete.
 
@@ -388,3 +391,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Tasks 6.2-6.5 completed: search command with --scope/--repo flags, Rich table output (#, Score, Repo, When, Context), _format_time_ago() for relative timestamps, fork command output (`opencode --session <id>`), no-results tips, error handling; hides Repo column when repo filter active; 11 new tests (362 total) |
 | 2026-01-21 | Task 6.4 completed: status command with session count, chunk count, last sync time (relative format), database path display; 6 new tests in TestStatusCommand class (366 total); Phase 6 complete |
 | 2026-01-21 | Task 7.1 completed: Created ~/.config/opencode/commands/detect-fork.md with command definition including $ARGUMENTS support, scope/repo flags, table output format, and fork command instructions |
+| 2026-01-21 | Task 7.2 completed: Created ~/.config/opencode/skills/detect-fork/SKILL.md with full agent skill definition, YAML frontmatter, trigger conditions, CLI commands, scoring weights, scopes, output format, example interaction, troubleshooting; Phase 7 complete; **ALL MVP TASKS COMPLETE (27/27)** |
