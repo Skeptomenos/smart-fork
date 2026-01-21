@@ -89,9 +89,10 @@ Complete phases sequentially with these priorities within each phase:
       Impl: Uses RETRIEVAL_DOCUMENT task type for optimal indexing, lazy initialization,
             configurable batch size/rate limit, comprehensive error handling (28 tests)
 
-- [ ] **Task 2.3**: Add rate limiting to Vertex AI provider (100ms delay)
+- [x] **Task 2.3**: Add rate limiting to Vertex AI provider (100ms delay)
       Files: `smart_fork/embeddings.py` (extend)
       Test: Observes 100ms delay between API batch requests
+      Note: Implemented as part of Task 2.2; rate_limit_ms=100 default in config, time.sleep between batches
 
 - [ ] **Task 2.4**: Implement Ollama embedding provider (fallback)
       Files: `smart_fork/embeddings.py` (extend)
@@ -302,7 +303,7 @@ Differences between spec and plan (resolved):
 | Phase | Status | Tasks Done | MVP? |
 |-------|--------|------------|------|
 | 1. Foundation | Complete | 5/5 | Yes |
-| 2. Embedding | In Progress | 2/5 | Yes |
+| 2. Embedding | In Progress | 3/5 | Yes |
 | 3. Storage | Not Started | 0/3 | Yes |
 | 4. Ingestion | Not Started | 0/4 | Yes |
 | 5. Query | Not Started | 0/3 | Yes |
@@ -310,7 +311,7 @@ Differences between spec and plan (resolved):
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 7/31 tasks complete (7/27 MVP tasks)
+**Total**: 8/31 tasks complete (8/27 MVP tasks)
 
 ---
 
@@ -342,3 +343,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 1.5 completed: logging.py with structlog configuration, context binding, JSON output, 24 tests passing (91 total) |
 | 2026-01-21 | Task 2.1 completed: embeddings.py with EmbeddingProvider ABC and EmbeddingError exception class, mypy --strict passes |
 | 2026-01-21 | Task 2.2 completed: VertexAIProvider with batching, rate limiting, lazy init, RETRIEVAL_DOCUMENT task type, 28 tests passing (119 total) |
+| 2026-01-21 | Task 2.3 marked complete: Rate limiting already implemented in Task 2.2 (config.rate_limit_ms=100, time.sleep between batches) |
