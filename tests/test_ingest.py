@@ -14,10 +14,14 @@ from typing import Any
 import pytest
 
 from smart_fork.ingest import (
+    ParsedSession,
     SessionInfo,
     SessionMetadata,
+    chunk_session,
     discover_sessions,
     get_sessions_to_sync,
+    parse_session,
+    parse_session_messages,
     parse_session_metadata,
 )
 
@@ -604,3 +608,402 @@ class TestSessionMetadata:
 
         assert meta.parent_session_id == "ses_parent"
         assert meta.model == "claude-3-opus"
+
+
+# ============================================================================
+# parse_session_messages() Tests
+# ============================================================================
+
+
+class TestParseSessionMessages:
+    """Tests for parse_session_messages function."""
+
+    def test_parses_valid_messages(self, sessions_dir: Path) -> None:
+        """Should parse array of message objects."""
+        messages = [
+            {"role": "user", "content": "Hello, how are you?"},
+            {"role": "assistant", "content": "I'm doing great!"},
+            {"role": "user", "content": "That's good to hear."},
+        ]
+        session_path = create_session(sessions_dir, "ses_test", messages=messages)
+
+        result = parse_session_messages(session_path)
+
+        assert len(result) == 3
+        assert result[0] == {"role": "user", "content": "Hello, how are you?"}
+        assert result[1] == {"role": "assistant", "content": "I'm doing great!"}
+        assert result[2] == {"role": "user", "content": "That's good to hear."}
+
+    def test_returns_empty_for_missing_file(self, sessions_dir: Path) -> None:
+        """Should return empty list when messages.json doesn't exist."""
+        session_path = create_session(sessions_dir, "ses_test", skip_messages_json=True)
+
+        result = parse_session_messages(session_path)
+
+        assert result == []
+
+    def test_returns_empty_for_invalid_json(self, sessions_dir: Path) -> None:
+        """Should return empty list for malformed JSON."""
+        session_path = sessions_dir / "ses_invalid"
+        session_path.mkdir()
+        (session_path / "session.json").write_text("{}")
+        (session_path / "messages.json").write_text("not valid json[")
+
+        result = parse_session_messages(session_path)
+
+        assert result == []
+
+    def test_returns_empty_for_non_array_json(self, sessions_dir: Path) -> None:
+        """Should return empty list when JSON is not an array."""
+        session_path = sessions_dir / "ses_object"
+        session_path.mkdir()
+        (session_path / "session.json").write_text("{}")
+        (session_path / "messages.json").write_text('{"not": "an array"}')
+
+        result = parse_session_messages(session_path)
+
+        assert result == []
+
+    def test_skips_messages_with_empty_content(self, sessions_dir: Path) -> None:
+        """Should skip messages without content."""
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": ""},  # Empty content
+            {"role": "user", "content": "Still here"},
+        ]
+        session_path = create_session(sessions_dir, "ses_empty", messages=messages)
+
+        result = parse_session_messages(session_path)
+
+        assert len(result) == 2
+        assert result[0]["content"] == "Hello"
+        assert result[1]["content"] == "Still here"
+
+    def test_skips_messages_without_content_key(self, sessions_dir: Path) -> None:
+        """Should skip messages that don't have content key."""
+        session_path = sessions_dir / "ses_no_content"
+        session_path.mkdir()
+        (session_path / "session.json").write_text("{}")
+        # Custom messages with missing content key
+        messages_data = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant"},  # No content key
+            {"role": "user", "content": "World"},
+        ]
+        (session_path / "messages.json").write_text(json.dumps(messages_data))
+
+        result = parse_session_messages(session_path)
+
+        assert len(result) == 2
+
+    def test_defaults_missing_role_to_unknown(self, sessions_dir: Path) -> None:
+        """Should use 'unknown' for messages without role."""
+        session_path = sessions_dir / "ses_no_role"
+        session_path.mkdir()
+        (session_path / "session.json").write_text("{}")
+        messages_data = [{"content": "I have no role"}]
+        (session_path / "messages.json").write_text(json.dumps(messages_data))
+
+        result = parse_session_messages(session_path)
+
+        assert len(result) == 1
+        assert result[0]["role"] == "unknown"
+        assert result[0]["content"] == "I have no role"
+
+    def test_skips_non_object_messages(self, sessions_dir: Path) -> None:
+        """Should skip array elements that aren't objects."""
+        session_path = sessions_dir / "ses_mixed"
+        session_path.mkdir()
+        (session_path / "session.json").write_text("{}")
+        messages_data = [
+            {"role": "user", "content": "Valid message"},
+            "just a string",
+            123,
+            None,
+            {"role": "assistant", "content": "Another valid one"},
+        ]
+        (session_path / "messages.json").write_text(json.dumps(messages_data))
+
+        result = parse_session_messages(session_path)
+
+        assert len(result) == 2
+        assert result[0]["content"] == "Valid message"
+        assert result[1]["content"] == "Another valid one"
+
+    def test_returns_empty_for_empty_array(self, sessions_dir: Path) -> None:
+        """Should return empty list for empty message array."""
+        # Create session directory manually with empty messages array
+        session_path = sessions_dir / "ses_empty_msgs"
+        session_path.mkdir()
+        (session_path / "session.json").write_text("{}")
+        (session_path / "messages.json").write_text("[]")
+
+        result = parse_session_messages(session_path)
+
+        assert result == []
+
+    def test_converts_non_string_values_to_strings(self, sessions_dir: Path) -> None:
+        """Should convert role and content to strings."""
+        session_path = sessions_dir / "ses_types"
+        session_path.mkdir()
+        (session_path / "session.json").write_text("{}")
+        # Non-string values that should be converted
+        messages_data = [{"role": 123, "content": "message with int role"}]
+        (session_path / "messages.json").write_text(json.dumps(messages_data))
+
+        result = parse_session_messages(session_path)
+
+        assert len(result) == 1
+        assert result[0]["role"] == "123"
+        assert result[0]["content"] == "message with int role"
+
+
+# ============================================================================
+# parse_session() Tests
+# ============================================================================
+
+
+class TestParseSession:
+    """Tests for parse_session function."""
+
+    def test_parses_complete_session(self, sessions_dir: Path) -> None:
+        """Should parse both metadata and messages."""
+        session_data = {
+            "working_directory": "/home/user/project",
+            "timestamp": 1705848000,
+            "parent_session_id": "ses_parent",
+        }
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there!"},
+        ]
+        session_path = create_session(
+            sessions_dir, "ses_full", session_data=session_data, messages=messages
+        )
+
+        result = parse_session(session_path)
+
+        assert result is not None
+        assert result.session_id == "ses_full"
+        assert result.repo_path == "/home/user/project"
+        assert result.timestamp == 1705848000
+        assert result.parent_session_id == "ses_parent"
+        assert len(result.messages) == 2
+        assert result.messages[0]["role"] == "user"
+        assert result.messages[1]["role"] == "assistant"
+
+    def test_returns_none_for_missing_metadata(self, sessions_dir: Path) -> None:
+        """Should return None when session.json is missing."""
+        session_path = create_session(
+            sessions_dir, "ses_no_meta", skip_session_json=True
+        )
+
+        result = parse_session(session_path)
+
+        assert result is None
+
+    def test_returns_session_with_empty_messages(self, sessions_dir: Path) -> None:
+        """Should return session even when messages.json is missing."""
+        session_path = create_session(
+            sessions_dir, "ses_no_msgs", skip_messages_json=True
+        )
+        # Need to create a valid session.json since we're not skipping it
+        (session_path / "session.json").write_text('{"working_directory": "/test"}')
+
+        # But we need messages.json for discover_sessions to find it
+        # So let's create it then parse
+        # Actually, parse_session doesn't require messages.json to exist
+        # Let's directly test the function
+
+        # Create a session directory manually
+        session_path_manual = sessions_dir / "ses_manual"
+        session_path_manual.mkdir()
+        (session_path_manual / "session.json").write_text(
+            '{"working_directory": "/project"}'
+        )
+        # No messages.json
+
+        result = parse_session(session_path_manual)
+
+        assert result is not None
+        assert result.session_id == "ses_manual"
+        assert result.messages == []
+
+    def test_handles_invalid_messages(self, sessions_dir: Path) -> None:
+        """Should handle invalid messages.json gracefully."""
+        session_path = sessions_dir / "ses_bad_msgs"
+        session_path.mkdir()
+        (session_path / "session.json").write_text('{"working_directory": "/test"}')
+        (session_path / "messages.json").write_text("not valid json")
+
+        result = parse_session(session_path)
+
+        assert result is not None
+        assert result.messages == []
+
+
+# ============================================================================
+# chunk_session() Tests
+# ============================================================================
+
+
+class TestChunkSession:
+    """Tests for chunk_session function."""
+
+    def test_chunks_simple_session(self, sessions_dir: Path) -> None:
+        """Should create SessionChunk objects from parsed session."""
+        session = ParsedSession(
+            session_id="ses_test123",
+            repo_path="/home/user/project",
+            timestamp=1705848000,
+            parent_session_id=None,
+            messages=[
+                {"role": "user", "content": "Hello, I need help with Python."},
+                {"role": "assistant", "content": "Of course! What do you need?"},
+            ],
+        )
+
+        result = chunk_session(session, model_used="text-embedding-004")
+
+        # Should have at least one chunk
+        assert len(result) >= 1
+        # Verify chunk structure
+        chunk = result[0]
+        assert chunk.id == "ses_test123_chunk_0"
+        assert chunk.session_id == "ses_test123"
+        assert chunk.repo_path == "/home/user/project"
+        assert chunk.chunk_index == 0
+        assert chunk.timestamp == 1705848000
+        assert chunk.model_used == "text-embedding-004"
+        assert chunk.embedding == []  # Not filled yet
+        assert chunk.token_count > 0
+        assert "Hello" in chunk.chunk_text
+
+    def test_returns_empty_for_empty_messages(self) -> None:
+        """Should return empty list when session has no messages."""
+        session = ParsedSession(
+            session_id="ses_empty",
+            repo_path="/test",
+            timestamp=1000,
+            parent_session_id=None,
+            messages=[],
+        )
+
+        result = chunk_session(session, model_used="test-model")
+
+        assert result == []
+
+    def test_chunk_ids_are_sequential(self) -> None:
+        """Should create sequential chunk IDs."""
+        # Create a session with enough content to produce multiple chunks
+        long_content = "This is a test. " * 1000  # ~4000+ tokens
+        session = ParsedSession(
+            session_id="ses_multi",
+            repo_path="/test",
+            timestamp=1000,
+            parent_session_id=None,
+            messages=[{"role": "user", "content": long_content}],
+        )
+
+        result = chunk_session(session, model_used="test-model")
+
+        # Should have multiple chunks
+        assert len(result) >= 2
+        # Verify IDs are sequential
+        for i, chunk in enumerate(result):
+            assert chunk.id == f"ses_multi_chunk_{i}"
+            assert chunk.chunk_index == i
+
+    def test_preserves_parent_session_id_not_in_chunk(self) -> None:
+        """Should not include parent_session_id in chunk (it's session-level)."""
+        session = ParsedSession(
+            session_id="ses_child",
+            repo_path="/test",
+            timestamp=1000,
+            parent_session_id="ses_parent",
+            messages=[{"role": "user", "content": "Test message"}],
+        )
+
+        result = chunk_session(session, model_used="test-model")
+
+        # SessionChunk doesn't have parent_session_id field
+        # It's used at query time for scoring, not stored per-chunk
+        assert len(result) >= 1
+        # Verify chunk has expected fields (no parent_session_id)
+        chunk = result[0]
+        assert hasattr(chunk, "session_id")
+        assert not hasattr(chunk, "parent_session_id")
+
+    def test_chunk_text_contains_formatted_messages(self) -> None:
+        """Should format messages as 'role: content' in chunk text."""
+        session = ParsedSession(
+            session_id="ses_format",
+            repo_path="/test",
+            timestamp=1000,
+            parent_session_id=None,
+            messages=[
+                {"role": "user", "content": "Hello world"},
+                {"role": "assistant", "content": "Hi there"},
+            ],
+        )
+
+        result = chunk_session(session, model_used="test-model")
+
+        assert len(result) >= 1
+        chunk_text = result[0].chunk_text
+        # Should contain formatted messages
+        assert "user: Hello world" in chunk_text
+        assert "assistant: Hi there" in chunk_text
+
+    def test_handles_messages_with_special_characters(self) -> None:
+        """Should handle messages with special characters."""
+        session = ParsedSession(
+            session_id="ses_special",
+            repo_path="/test",
+            timestamp=1000,
+            parent_session_id=None,
+            messages=[
+                {"role": "user", "content": "Code: `print('hello')`"},
+                {"role": "assistant", "content": "Here's a Unicode: 日本語"},
+            ],
+        )
+
+        result = chunk_session(session, model_used="test-model")
+
+        assert len(result) >= 1
+        chunk_text = result[0].chunk_text
+        assert "print('hello')" in chunk_text
+        assert "日本語" in chunk_text
+
+
+# ============================================================================
+# ParsedSession Dataclass Tests
+# ============================================================================
+
+
+class TestParsedSession:
+    """Tests for ParsedSession dataclass."""
+
+    def test_creation(self) -> None:
+        """Should create ParsedSession with all fields."""
+        session = ParsedSession(
+            session_id="ses_test",
+            repo_path="/project",
+            timestamp=1705848000,
+            parent_session_id="ses_parent",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+
+        assert session.session_id == "ses_test"
+        assert session.repo_path == "/project"
+        assert session.timestamp == 1705848000
+        assert session.parent_session_id == "ses_parent"
+        assert len(session.messages) == 1
+
+    def test_equality(self) -> None:
+        """Should compare equal with same values."""
+        msgs = [{"role": "user", "content": "Hi"}]
+        session1 = ParsedSession("ses_a", "/a", 1000, None, msgs)
+        session2 = ParsedSession("ses_a", "/a", 1000, None, msgs)
+
+        assert session1 == session2

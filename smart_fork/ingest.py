@@ -23,7 +23,9 @@ from pathlib import Path
 
 import structlog
 
-from smart_fork.config import SmartForkConfig
+from smart_fork.chunker import Chunk, Chunker, chunk_messages
+from smart_fork.config import ChunkingConfig, SmartForkConfig
+from smart_fork.types import SessionChunk
 
 
 logger = structlog.get_logger(__name__)
@@ -342,3 +344,209 @@ def get_sessions_to_sync(
     )
 
     return sessions_to_process, session_ids_to_delete
+
+
+def parse_session_messages(session_path: Path) -> list[dict[str, str]]:
+    """Parse messages from a session's messages.json file.
+
+    Reads the conversation transcript from messages.json and returns
+    the list of message objects. Each message should have 'role' and
+    'content' keys.
+
+    Args:
+        session_path: Path to the session directory (not the JSON file)
+
+    Returns:
+        List of message dicts with 'role' and 'content' keys.
+        Returns empty list if file is missing, invalid, or empty.
+
+    Note:
+        Defensively handles missing or malformed messages. Messages
+        without content are skipped. Messages without role default to
+        "unknown".
+    """
+    messages_json = session_path / "messages.json"
+    session_id = session_path.name
+
+    if not messages_json.exists():
+        logger.warning(
+            "messages_json_not_found",
+            session_id=session_id,
+            path=str(messages_json),
+        )
+        return []
+
+    try:
+        with open(messages_json, encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        logger.warning(
+            "messages_json_invalid",
+            session_id=session_id,
+            error=str(e),
+        )
+        return []
+    except OSError as e:
+        logger.warning(
+            "messages_json_read_error",
+            session_id=session_id,
+            error=str(e),
+        )
+        return []
+
+    if not isinstance(data, list):
+        logger.warning(
+            "messages_json_not_array",
+            session_id=session_id,
+            actual_type=type(data).__name__,
+        )
+        return []
+
+    # Filter and normalize messages
+    messages: list[dict[str, str]] = []
+    for i, msg in enumerate(data):
+        if not isinstance(msg, dict):
+            logger.debug(
+                "message_not_object",
+                session_id=session_id,
+                index=i,
+                actual_type=type(msg).__name__,
+            )
+            continue
+
+        content = msg.get("content", "")
+        if not content:
+            # Skip messages with empty content
+            continue
+
+        role = msg.get("role", "unknown")
+        messages.append({"role": str(role), "content": str(content)})
+
+    logger.debug(
+        "messages_parsed",
+        session_id=session_id,
+        message_count=len(messages),
+        original_count=len(data),
+    )
+
+    return messages
+
+
+@dataclass
+class ParsedSession:
+    """A fully parsed session ready for chunking and embedding.
+
+    Combines metadata from session.json with messages from messages.json.
+    This is the intermediate representation before chunking.
+
+    Attributes:
+        session_id: OpenCode session ID
+        repo_path: Absolute path to repository where session occurred
+        timestamp: Unix timestamp of session creation
+        parent_session_id: ID of parent session if this was a fork
+        messages: List of message dicts with 'role' and 'content' keys
+    """
+
+    session_id: str
+    repo_path: str
+    timestamp: int
+    parent_session_id: str | None
+    messages: list[dict[str, str]]
+
+
+def parse_session(session_path: Path) -> ParsedSession | None:
+    """Parse a complete session including metadata and messages.
+
+    Combines parse_session_metadata and parse_session_messages into
+    a single ParsedSession object ready for chunking.
+
+    Args:
+        session_path: Path to the session directory
+
+    Returns:
+        ParsedSession if parsing succeeds, None if metadata is missing
+        or invalid. Messages may be empty if messages.json is missing.
+    """
+    metadata = parse_session_metadata(session_path)
+    if metadata is None:
+        return None
+
+    messages = parse_session_messages(session_path)
+
+    return ParsedSession(
+        session_id=metadata.session_id,
+        repo_path=metadata.repo_path,
+        timestamp=metadata.timestamp,
+        parent_session_id=metadata.parent_session_id,
+        messages=messages,
+    )
+
+
+def chunk_session(
+    session: ParsedSession,
+    model_used: str,
+    config: ChunkingConfig | None = None,
+) -> list[SessionChunk]:
+    """Chunk a parsed session into SessionChunk objects for embedding.
+
+    Takes a ParsedSession and splits its messages into chunks using
+    the token-based chunker. Each chunk is converted to a SessionChunk
+    with all required metadata for storage in LanceDB.
+
+    Args:
+        session: A fully parsed session with metadata and messages
+        model_used: Identifier of the embedding model that will be used
+        config: Optional chunking configuration
+
+    Returns:
+        List of SessionChunk objects ready for embedding. The embedding
+        field is left as empty list - caller must populate embeddings.
+        Returns empty list if session has no messages.
+
+    Note:
+        Chunks are created with empty embedding vectors. The caller is
+        responsible for generating embeddings before storing in LanceDB.
+    """
+    if not session.messages:
+        logger.debug(
+            "session_has_no_messages",
+            session_id=session.session_id,
+        )
+        return []
+
+    # Chunk the messages using the token-based chunker
+    chunks = chunk_messages(session.messages, config)
+
+    if not chunks:
+        logger.debug(
+            "session_produced_no_chunks",
+            session_id=session.session_id,
+        )
+        return []
+
+    # Convert Chunk objects to SessionChunk objects
+    session_chunks: list[SessionChunk] = []
+    for chunk in chunks:
+        chunk_id = f"{session.session_id}_chunk_{chunk.index}"
+        session_chunks.append(
+            SessionChunk(
+                id=chunk_id,
+                session_id=session.session_id,
+                repo_path=session.repo_path,
+                chunk_index=chunk.index,
+                chunk_text=chunk.text,
+                embedding=[],  # To be filled by embedding provider
+                timestamp=session.timestamp,
+                model_used=model_used,
+                token_count=chunk.token_count,
+            )
+        )
+
+    logger.info(
+        "session_chunked",
+        session_id=session.session_id,
+        chunk_count=len(session_chunks),
+        total_tokens=sum(c.token_count for c in session_chunks),
+    )
+
+    return session_chunks
