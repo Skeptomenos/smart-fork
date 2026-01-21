@@ -43,6 +43,25 @@ class SessionChunk:
 
 
 @dataclass
+class ChunkMatch:
+    """A single chunk returned from vector search.
+
+    Represents a matched chunk with its similarity score. Used as input
+    to the scoring algorithm which aggregates chunks into SessionMatch.
+
+    Attributes:
+        chunk: The matched SessionChunk with full data
+        similarity: Similarity score from 0.0 to 1.0 (higher = more similar)
+                   Converted from LanceDB distance (lower = closer)
+        distance: Raw distance from LanceDB (for debugging/analysis)
+    """
+
+    chunk: SessionChunk
+    similarity: float
+    distance: float
+
+
+@dataclass
 class SessionMatch:
     """Query result representing a matched session.
 

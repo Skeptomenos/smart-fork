@@ -111,9 +111,10 @@ Complete phases sequentially with these priorities within each phase:
       Test: Creates table with vector column (768-dim), opens existing DB at runtime location
       Impl: ChunkDatabase class with add_chunks, delete_by_session, count_chunks/sessions, drop_table methods. Uses Arrow schema for 768-dim vectors. 32 tests passing (183 total)
 
-- [ ] **Task 3.2**: Implement vector search with ANN query
-      Files: `smart_fork/db.py` (extend)
-      Test: Returns top-20 chunks with similarity scores
+- [x] **Task 3.2**: Implement vector search with ANN query
+      Files: `smart_fork/db.py` (extend), `tests/test_db.py` (extend)
+      Test: Returns top-k chunks with similarity scores, supports repo_path prefilter
+      Impl: search() method with L2 distance → similarity conversion (1/(1+d)), ChunkMatch dataclass in types.py, get_session_chunk_count() for scoring support, 15 new tests (47 total in test_db.py, 198 total)
 
 - [ ] **Task 3.3**: Add repo-scoped filtering at query level
       Files: `smart_fork/db.py` (extend)
@@ -307,14 +308,14 @@ Differences between spec and plan (resolved):
 |-------|--------|------------|------|
 | 1. Foundation | Complete | 5/5 | Yes |
 | 2. Embedding | Complete | 5/5 | Yes |
-| 3. Storage | In Progress | 1/3 | Yes |
+| 3. Storage | In Progress | 2/3 | Yes |
 | 4. Ingestion | Not Started | 0/4 | Yes |
 | 5. Query | Not Started | 0/3 | Yes |
 | 6. CLI | Not Started | 0/5 | Yes |
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 11/31 tasks complete (11/27 MVP tasks)
+**Total**: 12/31 tasks complete (12/27 MVP tasks)
 
 ---
 
@@ -350,3 +351,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 2.4 completed: OllamaProvider with /api/embed endpoint, lazy httpx import, comprehensive error handling, 21 tests passing (140 total) |
 | 2026-01-21 | Task 2.5 completed: create_provider() factory with auto-fallback, allow_fallback parameter, 11 tests (151 total), Phase 2 complete |
 | 2026-01-21 | Task 3.1 completed: db.py with ChunkDatabase class, Arrow schema for 768-dim vectors, CRUD operations, 32 tests passing (183 total) |
+| 2026-01-21 | Task 3.2 completed: search() with ANN query, L2→similarity conversion, repo_path prefilter, ChunkMatch dataclass, get_session_chunk_count(), 15 new tests (198 total) |

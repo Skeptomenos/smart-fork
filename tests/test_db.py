@@ -25,7 +25,7 @@ from smart_fork.db import (
     TableNotFoundError,
     _get_arrow_schema,
 )
-from smart_fork.types import SessionChunk
+from smart_fork.types import ChunkMatch, SessionChunk
 
 
 # --- Fixtures ---
@@ -440,3 +440,270 @@ class TestErrorHandling:
         error_msg = str(exc_info.value)
         assert "sessions" in error_msg.lower()
         assert "sync" in error_msg.lower()
+
+
+# --- Vector Search Tests ---
+
+
+@pytest.fixture
+def searchable_chunks() -> list[SessionChunk]:
+    """Create chunks with distinct embeddings for search testing.
+
+    Creates three sessions with different embedding patterns:
+    - ses_alpha: embeddings start with [0.9, 0.1, ...] - "high first dim"
+    - ses_beta: embeddings start with [0.1, 0.9, ...] - "high second dim"
+    - ses_gamma: embeddings all at [0.5, 0.5, ...] - "middle ground"
+    """
+    return [
+        # Session alpha - 2 chunks, high in first dimension
+        SessionChunk(
+            id="ses_alpha_chunk_0",
+            session_id="ses_alpha",
+            repo_path="/home/user/project-a",
+            chunk_index=0,
+            chunk_text="Alpha session first chunk about webhooks.",
+            embedding=[0.9] + [0.1] * (VECTOR_DIMENSIONS - 1),
+            timestamp=1700000000,
+            model_used="text-embedding-004",
+            token_count=6,
+        ),
+        SessionChunk(
+            id="ses_alpha_chunk_1",
+            session_id="ses_alpha",
+            repo_path="/home/user/project-a",
+            chunk_index=1,
+            chunk_text="Alpha session second chunk about API.",
+            embedding=[0.85] + [0.15] * (VECTOR_DIMENSIONS - 1),
+            timestamp=1700000000,
+            model_used="text-embedding-004",
+            token_count=6,
+        ),
+        # Session beta - 1 chunk, high in second dimension
+        SessionChunk(
+            id="ses_beta_chunk_0",
+            session_id="ses_beta",
+            repo_path="/home/user/project-b",
+            chunk_index=0,
+            chunk_text="Beta session about database queries.",
+            embedding=[0.1] + [0.9] + [0.1] * (VECTOR_DIMENSIONS - 2),
+            timestamp=1700001000,
+            model_used="text-embedding-004",
+            token_count=5,
+        ),
+        # Session gamma - 2 chunks, middle ground
+        SessionChunk(
+            id="ses_gamma_chunk_0",
+            session_id="ses_gamma",
+            repo_path="/home/user/project-a",  # Same repo as alpha
+            chunk_index=0,
+            chunk_text="Gamma session about general coding.",
+            embedding=[0.5] * VECTOR_DIMENSIONS,
+            timestamp=1700002000,
+            model_used="nomic-embed-text",
+            token_count=5,
+        ),
+        SessionChunk(
+            id="ses_gamma_chunk_1",
+            session_id="ses_gamma",
+            repo_path="/home/user/project-a",
+            chunk_index=1,
+            chunk_text="Gamma session continued.",
+            embedding=[0.5] * VECTOR_DIMENSIONS,
+            timestamp=1700002000,
+            model_used="nomic-embed-text",
+            token_count=3,
+        ),
+    ]
+
+
+class TestVectorSearch:
+    """Tests for vector search functionality."""
+
+    def test_search_returns_empty_when_no_table(self, db: ChunkDatabase) -> None:
+        """search returns empty list when table doesn't exist."""
+        query = [0.5] * VECTOR_DIMENSIONS
+        results = db.search(query)
+        assert results == []
+
+    def test_search_returns_chunk_matches(
+        self, db: ChunkDatabase, searchable_chunks: list[SessionChunk]
+    ) -> None:
+        """search returns ChunkMatch objects."""
+        db.add_chunks(searchable_chunks)
+        query = [0.5] * VECTOR_DIMENSIONS
+        results = db.search(query, top_k=3)
+
+        assert len(results) > 0
+        assert all(isinstance(r, ChunkMatch) for r in results)
+
+    def test_search_returns_similarity_scores(
+        self, db: ChunkDatabase, searchable_chunks: list[SessionChunk]
+    ) -> None:
+        """search results include similarity and distance."""
+        db.add_chunks(searchable_chunks)
+        query = [0.5] * VECTOR_DIMENSIONS
+        results = db.search(query, top_k=3)
+
+        for result in results:
+            # Similarity should be between 0 and 1
+            assert 0.0 <= result.similarity <= 1.0
+            # Distance should be >= 0
+            assert result.distance >= 0.0
+
+    def test_search_orders_by_similarity(
+        self, db: ChunkDatabase, searchable_chunks: list[SessionChunk]
+    ) -> None:
+        """search results are ordered by similarity (highest first)."""
+        db.add_chunks(searchable_chunks)
+        query = [0.5] * VECTOR_DIMENSIONS
+        results = db.search(query, top_k=5)
+
+        # Check that results are in descending similarity order
+        similarities = [r.similarity for r in results]
+        assert similarities == sorted(similarities, reverse=True)
+
+    def test_search_finds_similar_vectors(
+        self, db: ChunkDatabase, searchable_chunks: list[SessionChunk]
+    ) -> None:
+        """search finds vectors similar to the query."""
+        db.add_chunks(searchable_chunks)
+
+        # Query similar to alpha session (high first dimension)
+        query = [0.9] + [0.1] * (VECTOR_DIMENSIONS - 1)
+        results = db.search(query, top_k=2)
+
+        # Alpha chunks should be most similar
+        session_ids = [r.chunk.session_id for r in results]
+        assert session_ids[0] == "ses_alpha"
+
+    def test_search_respects_top_k_limit(
+        self, db: ChunkDatabase, searchable_chunks: list[SessionChunk]
+    ) -> None:
+        """search respects the top_k limit."""
+        db.add_chunks(searchable_chunks)
+        query = [0.5] * VECTOR_DIMENSIONS
+
+        results_2 = db.search(query, top_k=2)
+        results_5 = db.search(query, top_k=5)
+
+        assert len(results_2) == 2
+        assert len(results_5) == 5
+
+    def test_search_returns_fewer_if_not_enough_data(
+        self, db: ChunkDatabase, sample_chunk: SessionChunk
+    ) -> None:
+        """search returns fewer results if database has fewer chunks."""
+        db.add_chunks([sample_chunk])
+        query = [0.5] * VECTOR_DIMENSIONS
+
+        results = db.search(query, top_k=100)
+        assert len(results) == 1
+
+    def test_search_with_repo_filter(
+        self, db: ChunkDatabase, searchable_chunks: list[SessionChunk]
+    ) -> None:
+        """search filters by repo_path when specified."""
+        db.add_chunks(searchable_chunks)
+        query = [0.5] * VECTOR_DIMENSIONS
+
+        # Filter to project-b (only ses_beta)
+        results = db.search(query, repo_path="/home/user/project-b")
+
+        assert len(results) == 1
+        assert results[0].chunk.session_id == "ses_beta"
+
+    def test_search_repo_filter_returns_empty_for_no_match(
+        self, db: ChunkDatabase, searchable_chunks: list[SessionChunk]
+    ) -> None:
+        """search returns empty when repo filter matches no chunks."""
+        db.add_chunks(searchable_chunks)
+        query = [0.5] * VECTOR_DIMENSIONS
+
+        results = db.search(query, repo_path="/nonexistent/repo")
+        assert results == []
+
+    def test_search_includes_chunk_data(
+        self, db: ChunkDatabase, searchable_chunks: list[SessionChunk]
+    ) -> None:
+        """search results include full chunk data."""
+        db.add_chunks(searchable_chunks)
+        query = [0.9] + [0.1] * (VECTOR_DIMENSIONS - 1)
+        results = db.search(query, top_k=1)
+
+        result = results[0]
+        chunk = result.chunk
+
+        # Verify all fields are populated
+        assert chunk.id == "ses_alpha_chunk_0"
+        assert chunk.session_id == "ses_alpha"
+        assert chunk.repo_path == "/home/user/project-a"
+        assert chunk.chunk_index == 0
+        assert "Alpha" in chunk.chunk_text
+        assert len(chunk.embedding) == VECTOR_DIMENSIONS
+        assert chunk.timestamp == 1700000000
+        assert chunk.model_used == "text-embedding-004"
+        assert chunk.token_count == 6
+
+    def test_search_wrong_vector_dimensions_raises(
+        self, db: ChunkDatabase, searchable_chunks: list[SessionChunk]
+    ) -> None:
+        """search raises SchemaError for wrong query vector dimensions."""
+        db.add_chunks(searchable_chunks)
+        wrong_query = [0.5] * 100  # Wrong size
+
+        with pytest.raises(SchemaError) as exc_info:
+            db.search(wrong_query)
+        assert "100" in str(exc_info.value)
+        assert str(VECTOR_DIMENSIONS) in str(exc_info.value)
+
+    def test_search_handles_special_chars_in_repo_path(self, db: ChunkDatabase) -> None:
+        """search handles repo paths with special characters."""
+        # Create chunk with path containing single quotes
+        chunk = SessionChunk(
+            id="special_chunk_0",
+            session_id="ses_special",
+            repo_path="/home/user/project's-name",
+            chunk_index=0,
+            chunk_text="Special path test.",
+            embedding=[0.5] * VECTOR_DIMENSIONS,
+            timestamp=1700000000,
+            model_used="test",
+            token_count=3,
+        )
+        db.add_chunks([chunk])
+        query = [0.5] * VECTOR_DIMENSIONS
+
+        # Should handle the escaped quote properly
+        results = db.search(query, repo_path="/home/user/project's-name")
+        assert len(results) == 1
+        assert results[0].chunk.session_id == "ses_special"
+
+
+class TestGetSessionChunkCount:
+    """Tests for get_session_chunk_count method."""
+
+    def test_count_zero_when_no_table(self, db: ChunkDatabase) -> None:
+        """get_session_chunk_count returns 0 when table doesn't exist."""
+        count = db.get_session_chunk_count("ses_any")
+        assert count == 0
+
+    def test_count_zero_for_nonexistent_session(
+        self, db: ChunkDatabase, sample_chunk: SessionChunk
+    ) -> None:
+        """get_session_chunk_count returns 0 for unknown session."""
+        db.add_chunks([sample_chunk])
+        count = db.get_session_chunk_count("ses_nonexistent")
+        assert count == 0
+
+    def test_count_returns_correct_count(
+        self, db: ChunkDatabase, searchable_chunks: list[SessionChunk]
+    ) -> None:
+        """get_session_chunk_count returns correct chunk count."""
+        db.add_chunks(searchable_chunks)
+
+        # ses_alpha has 2 chunks
+        assert db.get_session_chunk_count("ses_alpha") == 2
+        # ses_beta has 1 chunk
+        assert db.get_session_chunk_count("ses_beta") == 1
+        # ses_gamma has 2 chunks
+        assert db.get_session_chunk_count("ses_gamma") == 2

@@ -19,15 +19,15 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import lancedb  # type: ignore[import-untyped]
 import pyarrow as pa  # type: ignore[import-untyped]
 
-from smart_fork.types import SessionChunk
+from smart_fork.types import ChunkMatch, SessionChunk
 
 if TYPE_CHECKING:
-    from lancedb.table import LanceTable  # type: ignore[import-untyped]
+    from lancedb.table import Table as LanceTable  # type: ignore[import-untyped]
 
 
 # Table name for session chunks
@@ -215,7 +215,7 @@ class ChunkDatabase:
         self,
         chunks: list[SessionChunk],
         *,
-        mode: str = "append",
+        mode: Literal["append", "overwrite"] = "append",
     ) -> int:
         """Add session chunks to the database.
 
@@ -353,3 +353,129 @@ class ChunkDatabase:
         # LanceDB connections don't have explicit close, but we can
         # clear our reference to allow garbage collection
         object.__setattr__(self, "_connection", None)
+
+    def search(
+        self,
+        query_vector: list[float],
+        *,
+        top_k: int = 20,
+        repo_path: str | None = None,
+    ) -> list[ChunkMatch]:
+        """Search for similar chunks using ANN vector search.
+
+        Uses LanceDB's approximate nearest neighbor search to find chunks
+        with embeddings similar to the query vector. Results are ordered
+        by distance (closest first) and converted to similarity scores.
+
+        Args:
+            query_vector: 768-dimensional embedding vector to search for.
+            top_k: Maximum number of results to return (default: 20).
+            repo_path: Optional filter to restrict search to a specific repo.
+                       Uses LanceDB prefilter for efficient filtering.
+
+        Returns:
+            List of ChunkMatch objects ordered by similarity (highest first).
+            Empty list if table doesn't exist or no matches found.
+
+        Raises:
+            SchemaError: If query_vector has wrong dimensions.
+            DatabaseError: If search operation fails.
+
+        Example:
+            matches = db.search(query_embedding, top_k=10)
+            for match in matches:
+                print(f"{match.chunk.session_id}: {match.similarity:.2f}")
+        """
+        # Validate query vector dimensions
+        if len(query_vector) != VECTOR_DIMENSIONS:
+            raise SchemaError(
+                f"Query vector has {len(query_vector)} dimensions, "
+                f"expected {VECTOR_DIMENSIONS}"
+            )
+
+        # Return empty if table doesn't exist
+        if not self.table_exists():
+            return []
+
+        try:
+            table = self._connection.open_table(SESSIONS_TABLE)
+
+            # Build search query
+            # LanceDB uses L2 distance by default (lower = more similar)
+            query = table.search(query_vector, vector_column_name="embedding")
+
+            # Apply repo filter if specified (prefilter for efficiency)
+            if repo_path:
+                # Escape single quotes in repo_path for SQL
+                escaped_path = repo_path.replace("'", "''")
+                query = query.where(f"repo_path = '{escaped_path}'", prefilter=True)
+
+            # Execute search with limit
+            query = query.limit(top_k)
+            results = query.to_arrow()
+
+            # Convert Arrow table to ChunkMatch objects
+            matches: list[ChunkMatch] = []
+            for i in range(results.num_rows):
+                # Extract fields from Arrow table
+                distance = float(results.column("_distance")[i].as_py())
+
+                # Convert L2 distance to similarity score
+                # L2 distance is >= 0, lower is better
+                # We use 1 / (1 + distance) to convert to 0-1 similarity
+                # where higher is better
+                similarity = 1.0 / (1.0 + distance)
+
+                # Reconstruct SessionChunk from result row
+                chunk = SessionChunk(
+                    id=str(results.column("id")[i].as_py()),
+                    session_id=str(results.column("session_id")[i].as_py()),
+                    repo_path=str(results.column("repo_path")[i].as_py()),
+                    chunk_index=int(results.column("chunk_index")[i].as_py()),
+                    chunk_text=str(results.column("chunk_text")[i].as_py()),
+                    embedding=list(results.column("embedding")[i].as_py()),
+                    timestamp=int(results.column("timestamp")[i].as_py()),
+                    model_used=str(results.column("model_used")[i].as_py()),
+                    token_count=int(results.column("token_count")[i].as_py()),
+                )
+
+                matches.append(
+                    ChunkMatch(
+                        chunk=chunk,
+                        similarity=similarity,
+                        distance=distance,
+                    )
+                )
+
+            # Results already sorted by distance (ascending) from LanceDB
+            # which means highest similarity first after our conversion
+            return matches
+
+        except Exception as e:
+            raise DatabaseError(f"Failed to search: {e}") from e
+
+    def get_session_chunk_count(self, session_id: str) -> int:
+        """Get the total number of chunks for a specific session.
+
+        Useful for computing chunk_ratio in scoring algorithm
+        (matching chunks / total chunks).
+
+        Args:
+            session_id: Session ID to count chunks for.
+
+        Returns:
+            Total number of chunks for the session, or 0 if not found.
+
+        Raises:
+            DatabaseError: If count operation fails.
+        """
+        if not self.table_exists():
+            return 0
+
+        try:
+            table = self._connection.open_table(SESSIONS_TABLE)
+            return int(table.count_rows(f"session_id = '{session_id}'"))
+        except Exception as e:
+            raise DatabaseError(
+                f"Failed to count chunks for session {session_id}: {e}"
+            ) from e
