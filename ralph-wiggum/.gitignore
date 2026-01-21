@@ -1,0 +1,6 @@
+# Transient state
+.last-*
+
+# Keep directory structure
+!.gitkeep
+
