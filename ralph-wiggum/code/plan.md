@@ -82,10 +82,12 @@ Complete phases sequentially with these priorities within each phase:
       Test: ABC defined with embed() and model_name() method signatures
       Note: All providers in single embeddings.py file (flat structure per AGENTS.md)
 
-- [ ] **Task 2.2**: Implement VertexAI embedding provider with batching
+- [x] **Task 2.2**: Implement VertexAI embedding provider with batching
       Files: `smart_fork/embeddings.py` (extend), `tests/test_embeddings.py`
       Test: Returns 768-dim vectors from Vertex AI; batches up to 250 texts per API call
       Note: Vertex AI text-embedding-004 supports batch requests (max 250 texts per call)
+      Impl: Uses RETRIEVAL_DOCUMENT task type for optimal indexing, lazy initialization,
+            configurable batch size/rate limit, comprehensive error handling (28 tests)
 
 - [ ] **Task 2.3**: Add rate limiting to Vertex AI provider (100ms delay)
       Files: `smart_fork/embeddings.py` (extend)
@@ -300,7 +302,7 @@ Differences between spec and plan (resolved):
 | Phase | Status | Tasks Done | MVP? |
 |-------|--------|------------|------|
 | 1. Foundation | Complete | 5/5 | Yes |
-| 2. Embedding | In Progress | 1/5 | Yes |
+| 2. Embedding | In Progress | 2/5 | Yes |
 | 3. Storage | Not Started | 0/3 | Yes |
 | 4. Ingestion | Not Started | 0/4 | Yes |
 | 5. Query | Not Started | 0/3 | Yes |
@@ -308,7 +310,7 @@ Differences between spec and plan (resolved):
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 6/31 tasks complete (6/27 MVP tasks)
+**Total**: 7/31 tasks complete (7/27 MVP tasks)
 
 ---
 
@@ -339,3 +341,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 1.4 completed: chunker.py with token-based chunking, break point detection, 35 tests passing |
 | 2026-01-21 | Task 1.5 completed: logging.py with structlog configuration, context binding, JSON output, 24 tests passing (91 total) |
 | 2026-01-21 | Task 2.1 completed: embeddings.py with EmbeddingProvider ABC and EmbeddingError exception class, mypy --strict passes |
+| 2026-01-21 | Task 2.2 completed: VertexAIProvider with batching, rate limiting, lazy init, RETRIEVAL_DOCUMENT task type, 28 tests passing (119 total) |
