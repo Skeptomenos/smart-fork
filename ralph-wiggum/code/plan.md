@@ -200,7 +200,7 @@ Complete phases sequentially with these priorities within each phase:
 
 > **Priority**: Must-have per spec (US-005, US-006)
 
-- [ ] **Task 7.1**: Create /detect-fork command definition (US-005)
+- [x] **Task 7.1**: Create /detect-fork command definition (US-005)
       Files: `~/.config/opencode/commands/detect-fork.md`
       Test: Command appears in OpenCode, invokes smart-fork, formats results as table
       Note: See spec section 9.1 for command content template
@@ -334,10 +334,10 @@ Differences between spec and plan (resolved):
 | 4. Ingestion | Complete | 4/4 | Yes |
 | 5. Query | Complete | 3/3 | Yes |
 | 6. CLI | Complete | 5/5 | Yes |
-| 7. OpenCode | Not Started | 0/2 | Yes |
+| 7. OpenCode | In Progress | 1/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 25/31 tasks complete (25/27 MVP tasks)
+**Total**: 26/31 tasks complete (26/27 MVP tasks)
 
 > **Note**: Tasks 6.2-6.5 consolidated - search command, table output, fork command output, and error handling implemented together as tightly coupled functionality. Phase 6 complete.
 
@@ -387,3 +387,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 6.1 completed: cli.py with full sync command implementation, Rich progress bar, --force/--quiet flags, error handling with truncated error list, exit code 1 on failures; 20 CLI tests in test_cli.py (353 total) |
 | 2026-01-21 | Tasks 6.2-6.5 completed: search command with --scope/--repo flags, Rich table output (#, Score, Repo, When, Context), _format_time_ago() for relative timestamps, fork command output (`opencode --session <id>`), no-results tips, error handling; hides Repo column when repo filter active; 11 new tests (362 total) |
 | 2026-01-21 | Task 6.4 completed: status command with session count, chunk count, last sync time (relative format), database path display; 6 new tests in TestStatusCommand class (366 total); Phase 6 complete |
+| 2026-01-21 | Task 7.1 completed: Created ~/.config/opencode/commands/detect-fork.md with command definition including $ARGUMENTS support, scope/repo flags, table output format, and fork command instructions |
