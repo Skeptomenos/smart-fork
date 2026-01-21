@@ -116,9 +116,10 @@ Complete phases sequentially with these priorities within each phase:
       Test: Returns top-k chunks with similarity scores, supports repo_path prefilter
       Impl: search() method with L2 distance → similarity conversion (1/(1+d)), ChunkMatch dataclass in types.py, get_session_chunk_count() for scoring support, 15 new tests (47 total in test_db.py, 198 total)
 
-- [ ] **Task 3.3**: Add repo-scoped filtering at query level
+- [x] **Task 3.3**: Add repo-scoped filtering at query level
       Files: `smart_fork/db.py` (extend)
       Test: Filters by repo_path at LanceDB query level (not post-filter)
+      Impl: Already implemented in Task 3.2 via search(repo_path=...) with prefilter=True, 3 tests (test_search_with_repo_filter, test_search_repo_filter_returns_empty_for_no_match, test_search_handles_special_chars_in_repo_path)
 
 ## Phase 4: Ingestion Pipeline (Tasks 4.1-4.4)
 
@@ -308,14 +309,14 @@ Differences between spec and plan (resolved):
 |-------|--------|------------|------|
 | 1. Foundation | Complete | 5/5 | Yes |
 | 2. Embedding | Complete | 5/5 | Yes |
-| 3. Storage | In Progress | 2/3 | Yes |
+| 3. Storage | Complete | 3/3 | Yes |
 | 4. Ingestion | Not Started | 0/4 | Yes |
 | 5. Query | Not Started | 0/3 | Yes |
 | 6. CLI | Not Started | 0/5 | Yes |
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 12/31 tasks complete (12/27 MVP tasks)
+**Total**: 13/31 tasks complete (13/27 MVP tasks)
 
 ---
 
@@ -352,3 +353,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 2.5 completed: create_provider() factory with auto-fallback, allow_fallback parameter, 11 tests (151 total), Phase 2 complete |
 | 2026-01-21 | Task 3.1 completed: db.py with ChunkDatabase class, Arrow schema for 768-dim vectors, CRUD operations, 32 tests passing (183 total) |
 | 2026-01-21 | Task 3.2 completed: search() with ANN query, L2→similarity conversion, repo_path prefilter, ChunkMatch dataclass, get_session_chunk_count(), 15 new tests (198 total) |
+| 2026-01-21 | Task 3.3 completed: Already implemented in Task 3.2 (repo_path with prefilter=True), Phase 3 complete |
