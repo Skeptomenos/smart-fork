@@ -49,4 +49,16 @@ uv run mypy --strict            # Type check
 - Logging via `structlog`
 - Config via pydantic models
 
-For detailed requirements, see `ralph-wiggum/prds/PRD.md`
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| `ralph-wiggum/prds/PRD.md` | Product requirements with acceptance criteria |
+| `ralph-wiggum/specs/spec-smart-fork.md` | Technical specification and data models |
+| `ralph-wiggum/code/plan.md` | Implementation plan with task tracking |
+| `USAGE.md` | User-facing usage guide |
+
+## Current Status
+
+Development in progress. Code lives in `smart_fork/` (this repo).
+Runtime data will be stored in `~/.local/share/opencode/smart-fork/` when deployed.
