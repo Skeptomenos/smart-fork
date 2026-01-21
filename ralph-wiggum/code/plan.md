@@ -106,9 +106,10 @@ Complete phases sequentially with these priorities within each phase:
 
 ## Phase 3: Storage Layer (Tasks 3.1-3.3)
 
-- [ ] **Task 3.1**: Create LanceDB wrapper with schema definition
-      Files: `smart_fork/db.py`
+- [x] **Task 3.1**: Create LanceDB wrapper with schema definition
+      Files: `smart_fork/db.py`, `tests/test_db.py`
       Test: Creates table with vector column (768-dim), opens existing DB at runtime location
+      Impl: ChunkDatabase class with add_chunks, delete_by_session, count_chunks/sessions, drop_table methods. Uses Arrow schema for 768-dim vectors. 32 tests passing (183 total)
 
 - [ ] **Task 3.2**: Implement vector search with ANN query
       Files: `smart_fork/db.py` (extend)
@@ -306,14 +307,14 @@ Differences between spec and plan (resolved):
 |-------|--------|------------|------|
 | 1. Foundation | Complete | 5/5 | Yes |
 | 2. Embedding | Complete | 5/5 | Yes |
-| 3. Storage | Not Started | 0/3 | Yes |
+| 3. Storage | In Progress | 1/3 | Yes |
 | 4. Ingestion | Not Started | 0/4 | Yes |
 | 5. Query | Not Started | 0/3 | Yes |
 | 6. CLI | Not Started | 0/5 | Yes |
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 10/31 tasks complete (10/27 MVP tasks)
+**Total**: 11/31 tasks complete (11/27 MVP tasks)
 
 ---
 
@@ -348,3 +349,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 2.3 marked complete: Rate limiting already implemented in Task 2.2 (config.rate_limit_ms=100, time.sleep between batches) |
 | 2026-01-21 | Task 2.4 completed: OllamaProvider with /api/embed endpoint, lazy httpx import, comprehensive error handling, 21 tests passing (140 total) |
 | 2026-01-21 | Task 2.5 completed: create_provider() factory with auto-fallback, allow_fallback parameter, 11 tests (151 total), Phase 2 complete |
+| 2026-01-21 | Task 3.1 completed: db.py with ChunkDatabase class, Arrow schema for 768-dim vectors, CRUD operations, 32 tests passing (183 total) |
