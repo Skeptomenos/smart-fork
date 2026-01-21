@@ -164,9 +164,11 @@ Complete phases sequentially with these priorities within each phase:
 
 ## Phase 6: CLI Interface (Tasks 6.1-6.5)
 
-- [ ] **Task 6.1**: Create Click CLI entrypoint with sync command
-      Files: `smart_fork/cli.py`
+- [x] **Task 6.1**: Create Click CLI entrypoint with sync command
+      Files: `smart_fork/cli.py`, `tests/test_cli.py`
       Test: `uv run smart-fork sync` indexes sessions, `--force` re-indexes all, `--quiet` suppresses output
+      Impl: Full sync command with Rich progress bar, session tracking, error reporting (truncated to 3 errors),
+            exit code 1 on failures. 20 CLI tests passing (353 total)
 
 - [ ] **Task 6.2**: Add search command with --scope and --repo flags
       Files: `smart_fork/cli.py` (extend)
@@ -321,11 +323,11 @@ Differences between spec and plan (resolved):
 | 3. Storage | Complete | 3/3 | Yes |
 | 4. Ingestion | Complete | 4/4 | Yes |
 | 5. Query | Complete | 3/3 | Yes |
-| 6. CLI | Not Started | 0/5 | Yes |
+| 6. CLI | In Progress | 1/5 | Yes |
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 20/31 tasks complete (20/27 MVP tasks)
+**Total**: 21/31 tasks complete (21/27 MVP tasks)
 
 ---
 
@@ -370,3 +372,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 5.1 completed: query.py with search_sessions(), embed_query(), QueryResult/SessionChunkGroup dataclasses, EmptyQueryError/QueryError exceptions, 29 tests (304 total) |
 | 2026-01-21 | Task 5.2 completed: compute_session_score() with 5 weighted components (best_sim 40%, avg_sim 20%, chunk_ratio 5%, recency 25%, chain_quality 10%), compute_recency_score() with exponential decay (30-day half-life), _get_session_has_parent() with caching, 29 new tests in test_scoring.py (333 total) |
 | 2026-01-21 | Task 5.3 completed: Already implemented - _group_chunks_by_session() groups chunks by session_id, _create_session_matches() returns top-N SessionMatch with best_snippet (truncated to ~200 chars), 12 tests in TestSessionGrouping and TestResultFormatting classes, Phase 5 complete |
+| 2026-01-21 | Task 6.1 completed: cli.py with full sync command implementation, Rich progress bar, --force/--quiet flags, error handling with truncated error list, exit code 1 on failures; 20 CLI tests in test_cli.py (353 total) |
