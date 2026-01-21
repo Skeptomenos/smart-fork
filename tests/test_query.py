@@ -149,6 +149,13 @@ def db_with_chunks(
     return db
 
 
+@pytest.fixture
+def sessions_dir() -> Generator[Path, None, None]:
+    """Create a temporary sessions directory for testing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
+
+
 # --- Query Validation Tests ---
 
 
@@ -450,10 +457,14 @@ class TestSessionGrouping:
 
 
 class TestResultFormatting:
-    """Tests for session match creation."""
+    """Tests for session match creation with composite scoring."""
 
     def test_create_session_matches_returns_session_match_list(
-        self, sample_chunks: list[SessionChunk]
+        self,
+        sample_chunks: list[SessionChunk],
+        db_with_chunks: ChunkDatabase,
+        config: SmartForkConfig,
+        sessions_dir: Path,
     ) -> None:
         """_create_session_matches should return list of SessionMatch."""
         chunk_matches = [
@@ -461,35 +472,69 @@ class TestResultFormatting:
             for i, c in enumerate(sample_chunks)
         ]
         groups = _group_chunks_by_session(chunk_matches)
-        matches = _create_session_matches(groups, top_results=5)
+        matches = _create_session_matches(
+            groups,
+            top_results=5,
+            db=db_with_chunks,
+            config=config,
+            query_timestamp=1700000000,
+            sessions_dir=sessions_dir,
+        )
 
         assert all(isinstance(m, SessionMatch) for m in matches)
 
     def test_create_session_matches_includes_repo_name(
-        self, sample_chunks: list[SessionChunk]
+        self,
+        sample_chunks: list[SessionChunk],
+        db_with_chunks: ChunkDatabase,
+        config: SmartForkConfig,
+        sessions_dir: Path,
     ) -> None:
         """SessionMatch.repo_name should be basename of repo_path."""
         chunk_matches = [
             ChunkMatch(chunk=sample_chunks[0], similarity=0.9, distance=0.1)
         ]
         groups = _group_chunks_by_session(chunk_matches)
-        matches = _create_session_matches(groups, top_results=5)
+        matches = _create_session_matches(
+            groups,
+            top_results=5,
+            db=db_with_chunks,
+            config=config,
+            query_timestamp=1700000000,
+            sessions_dir=sessions_dir,
+        )
 
         assert matches[0].repo_name == "api-project"
 
     def test_create_session_matches_includes_snippet(
-        self, sample_chunks: list[SessionChunk]
+        self,
+        sample_chunks: list[SessionChunk],
+        db_with_chunks: ChunkDatabase,
+        config: SmartForkConfig,
+        sessions_dir: Path,
     ) -> None:
         """SessionMatch.best_snippet should contain chunk text."""
         chunk_matches = [
             ChunkMatch(chunk=sample_chunks[0], similarity=0.9, distance=0.1)
         ]
         groups = _group_chunks_by_session(chunk_matches)
-        matches = _create_session_matches(groups, top_results=5)
+        matches = _create_session_matches(
+            groups,
+            top_results=5,
+            db=db_with_chunks,
+            config=config,
+            query_timestamp=1700000000,
+            sessions_dir=sessions_dir,
+        )
 
         assert "rate limiting" in matches[0].best_snippet.lower()
 
-    def test_create_session_matches_truncates_long_snippets(self) -> None:
+    def test_create_session_matches_truncates_long_snippets(
+        self,
+        db: ChunkDatabase,
+        config: SmartForkConfig,
+        sessions_dir: Path,
+    ) -> None:
         """best_snippet should be truncated for long chunk text."""
         long_text = "x" * 300
         chunk = SessionChunk(
@@ -499,32 +544,56 @@ class TestResultFormatting:
             chunk_index=0,
             chunk_text=long_text,
             embedding=[0.1] * VECTOR_DIMENSIONS,
-            timestamp=0,
+            timestamp=1700000000,
             model_used="test",
             token_count=100,
         )
+        # Add chunk to db for get_session_chunk_count
+        db.add_chunks([chunk])
         chunk_matches = [ChunkMatch(chunk=chunk, similarity=0.9, distance=0.1)]
         groups = _group_chunks_by_session(chunk_matches)
-        matches = _create_session_matches(groups, top_results=5)
+        matches = _create_session_matches(
+            groups,
+            top_results=5,
+            db=db,
+            config=config,
+            query_timestamp=1700000000,
+            sessions_dir=sessions_dir,
+        )
 
         # Should be truncated to around 200 chars with "..."
         assert len(matches[0].best_snippet) < 250
         assert matches[0].best_snippet.endswith("...")
 
     def test_create_session_matches_respects_limit(
-        self, sample_chunks: list[SessionChunk]
+        self,
+        sample_chunks: list[SessionChunk],
+        db_with_chunks: ChunkDatabase,
+        config: SmartForkConfig,
+        sessions_dir: Path,
     ) -> None:
         """_create_session_matches should return at most top_results."""
         chunk_matches = [
             ChunkMatch(chunk=c, similarity=0.9, distance=0.1) for c in sample_chunks
         ]
         groups = _group_chunks_by_session(chunk_matches)
-        matches = _create_session_matches(groups, top_results=2)
+        matches = _create_session_matches(
+            groups,
+            top_results=2,
+            db=db_with_chunks,
+            config=config,
+            query_timestamp=1700000000,
+            sessions_dir=sessions_dir,
+        )
 
         assert len(matches) <= 2
 
     def test_create_session_matches_sorted_by_score(
-        self, sample_chunks: list[SessionChunk]
+        self,
+        sample_chunks: list[SessionChunk],
+        db_with_chunks: ChunkDatabase,
+        config: SmartForkConfig,
+        sessions_dir: Path,
     ) -> None:
         """SessionMatches should be sorted by score descending."""
         # Give each chunk a different similarity
@@ -533,7 +602,14 @@ class TestResultFormatting:
             for i, c in enumerate(sample_chunks)
         ]
         groups = _group_chunks_by_session(chunk_matches)
-        matches = _create_session_matches(groups, top_results=10)
+        matches = _create_session_matches(
+            groups,
+            top_results=10,
+            db=db_with_chunks,
+            config=config,
+            query_timestamp=1700000000,
+            sessions_dir=sessions_dir,
+        )
 
         scores = [m.score for m in matches]
         assert scores == sorted(scores, reverse=True)
