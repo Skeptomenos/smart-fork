@@ -145,9 +145,10 @@ Complete phases sequentially with these priorities within each phase:
 
 ## Phase 5: Query Engine (Tasks 5.1-5.3)
 
-- [ ] **Task 5.1**: Implement query embedding and vector search
+- [x] **Task 5.1**: Implement query embedding and vector search
       Files: `smart_fork/query.py`, `tests/test_query.py`
       Test: Embeds query, searches top-20 chunks, returns matches in < 3 sec
+      Impl: search_sessions() with query validation, embedding, vector search, session grouping; QueryResult/SessionChunkGroup dataclasses; 29 tests passing (304 total)
 
 - [ ] **Task 5.2**: Implement composite scoring algorithm
       Files: `smart_fork/query.py` (extend), `tests/test_scoring.py`
@@ -315,12 +316,12 @@ Differences between spec and plan (resolved):
 | 2. Embedding | Complete | 5/5 | Yes |
 | 3. Storage | Complete | 3/3 | Yes |
 | 4. Ingestion | Complete | 4/4 | Yes |
-| 5. Query | Not Started | 0/3 | Yes |
+| 5. Query | In Progress | 1/3 | Yes |
 | 6. CLI | Not Started | 0/5 | Yes |
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 17/31 tasks complete (17/27 MVP tasks)
+**Total**: 18/31 tasks complete (18/27 MVP tasks)
 
 ---
 
@@ -362,3 +363,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 4.2 completed: parse_session_messages(), parse_session(), chunk_session(), ParsedSession dataclass, 22 new tests (255 total) |
 | 2026-01-21 | Task 4.3 completed: sync_sessions() with full ingestion pipeline, load_sync_state()/save_sync_state(), SyncResult/SyncProgress dataclasses, progress callbacks, error handling, 20 new tests (275 total) |
 | 2026-01-21 | Task 4.4 completed: Incremental sync already implemented in Task 4.3 - get_sessions_to_sync() compares timestamps, sync_sessions(force=True) re-indexes all, 8 tests for incremental/force, Phase 4 complete |
+| 2026-01-21 | Task 5.1 completed: query.py with search_sessions(), embed_query(), QueryResult/SessionChunkGroup dataclasses, EmptyQueryError/QueryError exceptions, 29 tests (304 total) |
