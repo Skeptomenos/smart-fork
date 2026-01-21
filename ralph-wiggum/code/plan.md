@@ -186,9 +186,9 @@ Complete phases sequentially with these priorities within each phase:
             hides Repo column when repo filter active (all results same repo)
 
 - [x] **Task 6.4**: Add status command and fork command output
-      Files: `smart_fork/cli.py` (extend)
+      Files: `smart_fork/cli.py` (extend), `tests/test_cli.py` (extend)
       Test: Status shows session count/sync time; search outputs `opencode --session <id>`
-      Impl: Fork command output completed in Task 6.2; status command stub remains (separate task 6.4b)
+      Impl: Fork command output completed in Task 6.2; status command shows session count, chunk count, last sync time (with relative format), database path; 6 new tests (366 total)
 
 - [x] **Task 6.5**: Handle no-results and error cases gracefully
       Files: `smart_fork/cli.py` (extend)
@@ -333,13 +333,13 @@ Differences between spec and plan (resolved):
 | 3. Storage | Complete | 3/3 | Yes |
 | 4. Ingestion | Complete | 4/4 | Yes |
 | 5. Query | Complete | 3/3 | Yes |
-| 6. CLI | In Progress | 4/5 | Yes |
+| 6. CLI | Complete | 5/5 | Yes |
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 24/31 tasks complete (24/27 MVP tasks)
+**Total**: 25/31 tasks complete (25/27 MVP tasks)
 
-> **Note**: Tasks 6.2-6.5 consolidated - search command, table output, fork command output, and error handling implemented together as tightly coupled functionality. Remaining: status command (Task 6.4b).
+> **Note**: Tasks 6.2-6.5 consolidated - search command, table output, fork command output, and error handling implemented together as tightly coupled functionality. Phase 6 complete.
 
 ---
 
@@ -386,3 +386,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 5.3 completed: Already implemented - _group_chunks_by_session() groups chunks by session_id, _create_session_matches() returns top-N SessionMatch with best_snippet (truncated to ~200 chars), 12 tests in TestSessionGrouping and TestResultFormatting classes, Phase 5 complete |
 | 2026-01-21 | Task 6.1 completed: cli.py with full sync command implementation, Rich progress bar, --force/--quiet flags, error handling with truncated error list, exit code 1 on failures; 20 CLI tests in test_cli.py (353 total) |
 | 2026-01-21 | Tasks 6.2-6.5 completed: search command with --scope/--repo flags, Rich table output (#, Score, Repo, When, Context), _format_time_ago() for relative timestamps, fork command output (`opencode --session <id>`), no-results tips, error handling; hides Repo column when repo filter active; 11 new tests (362 total) |
+| 2026-01-21 | Task 6.4 completed: status command with session count, chunk count, last sync time (relative format), database path display; 6 new tests in TestStatusCommand class (366 total); Phase 6 complete |

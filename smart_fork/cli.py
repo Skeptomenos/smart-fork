@@ -357,9 +357,66 @@ def search(query: str, scope: str, repo_path: str | None) -> None:
 
 @main.command()
 def status() -> None:
-    """Show index statistics."""
-    # Implementation in Task 6.4
-    click.echo("status command not yet implemented (Phase 6)")
+    """Show index statistics.
+
+    Displays information about the Smart Fork index including:
+    - Number of indexed sessions
+    - Total chunks in the database
+    - Last sync timestamp
+    - Database location
+
+    Examples:
+        smart-fork status
+    """
+    # Lazy imports to speed up CLI startup
+    from datetime import datetime
+
+    from smart_fork.config import load_config
+    from smart_fork.db import ChunkDatabase
+    from smart_fork.ingest import load_sync_state
+
+    console = _get_console()
+
+    try:
+        config = load_config()
+    except ValueError as e:
+        console.print(f"[red]Error loading config:[/red] {e}")
+        sys.exit(1)
+
+    # Open database and get stats
+    db = ChunkDatabase.open(config.paths.lance_path)
+
+    session_count = db.count_sessions()
+    chunk_count = db.count_chunks()
+
+    # Load sync state for last sync time
+    sync_state = load_sync_state(config.paths.sync_state_path)
+
+    # Display status
+    console.print("[bold]Smart Fork Status[/bold]")
+    console.print()
+
+    if session_count == 0:
+        console.print("[dim]No sessions indexed yet.[/dim]")
+        console.print()
+        console.print("Run [cyan]smart-fork sync[/cyan] to index your sessions.")
+    else:
+        console.print(f"[green]Sessions:[/green]  {session_count:,}")
+        console.print(f"[green]Chunks:[/green]    {chunk_count:,}")
+
+        if sync_state.last_sync > 0:
+            # Format last sync time as human-readable
+            last_sync_dt = datetime.fromtimestamp(sync_state.last_sync)
+            last_sync_str = last_sync_dt.strftime("%Y-%m-%d %H:%M:%S")
+            last_sync_ago = _format_time_ago(sync_state.last_sync)
+            console.print(
+                f"[green]Last sync:[/green] {last_sync_str} ({last_sync_ago} ago)"
+            )
+        else:
+            console.print("[green]Last sync:[/green] [dim]Never[/dim]")
+
+    console.print()
+    console.print(f"[dim]Database:[/dim] {config.paths.lance_path}")
 
 
 if __name__ == "__main__":

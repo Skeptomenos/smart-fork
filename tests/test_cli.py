@@ -580,17 +580,162 @@ class TestSearchCommand:
 
 
 class TestStatusCommand:
-    """Tests for the status command (stub, implemented in Task 6.4)."""
+    """Tests for the status command."""
 
     def test_status_help(self) -> None:
         """Status --help shows expected content."""
         runner = CliRunner()
         result = runner.invoke(main, ["status", "--help"])
         assert result.exit_code == 0
+        assert "index statistics" in result.output.lower()
 
-    def test_status_stub(self) -> None:
-        """Status command shows not-implemented message (to be replaced in 6.4)."""
+    @patch("smart_fork.ingest.load_sync_state")
+    @patch("smart_fork.db.ChunkDatabase.open")
+    @patch(LOAD_CONFIG_PATH)
+    def test_status_empty_database(
+        self,
+        mock_load_config: MagicMock,
+        mock_db_open: MagicMock,
+        mock_load_sync_state: MagicMock,
+    ) -> None:
+        """Status with no indexed sessions shows helpful message."""
+        from pathlib import Path
+
+        from smart_fork.types import SyncState
+
+        # Set up mocks
+        mock_config = MagicMock()
+        mock_config.paths.lance_path = Path("/test/lance")
+        mock_config.paths.sync_state_path = Path("/test/sync-state.json")
+        mock_load_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_db.count_sessions.return_value = 0
+        mock_db.count_chunks.return_value = 0
+        mock_db_open.return_value = mock_db
+
+        mock_load_sync_state.return_value = SyncState(last_sync=0, sessions={})
+
         runner = CliRunner()
         result = runner.invoke(main, ["status"])
+
         assert result.exit_code == 0
-        assert "not yet implemented" in result.output
+        assert "No sessions indexed yet" in result.output
+        assert "smart-fork sync" in result.output
+
+    @patch("smart_fork.ingest.load_sync_state")
+    @patch("smart_fork.db.ChunkDatabase.open")
+    @patch(LOAD_CONFIG_PATH)
+    def test_status_with_indexed_sessions(
+        self,
+        mock_load_config: MagicMock,
+        mock_db_open: MagicMock,
+        mock_load_sync_state: MagicMock,
+    ) -> None:
+        """Status shows session and chunk counts."""
+        from pathlib import Path
+
+        from smart_fork.types import SyncState
+
+        # Set up mocks
+        mock_config = MagicMock()
+        mock_config.paths.lance_path = Path("/test/lance")
+        mock_config.paths.sync_state_path = Path("/test/sync-state.json")
+        mock_load_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_db.count_sessions.return_value = 42
+        mock_db.count_chunks.return_value = 350
+        mock_db_open.return_value = mock_db
+
+        # Last sync was 1 hour ago
+        import time
+
+        last_sync_time = int(time.time()) - 3600
+        mock_load_sync_state.return_value = SyncState(
+            last_sync=last_sync_time, sessions={}
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["status"])
+
+        assert result.exit_code == 0
+        assert "42" in result.output  # Session count
+        assert "350" in result.output  # Chunk count
+        assert "1 hour" in result.output  # Relative time
+
+    @patch("smart_fork.ingest.load_sync_state")
+    @patch("smart_fork.db.ChunkDatabase.open")
+    @patch(LOAD_CONFIG_PATH)
+    def test_status_shows_database_path(
+        self,
+        mock_load_config: MagicMock,
+        mock_db_open: MagicMock,
+        mock_load_sync_state: MagicMock,
+    ) -> None:
+        """Status displays the database path."""
+        from pathlib import Path
+
+        from smart_fork.types import SyncState
+
+        mock_config = MagicMock()
+        mock_config.paths.lance_path = Path("/custom/data/lance")
+        mock_config.paths.sync_state_path = Path("/custom/data/sync-state.json")
+        mock_load_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_db.count_sessions.return_value = 10
+        mock_db.count_chunks.return_value = 100
+        mock_db_open.return_value = mock_db
+
+        mock_load_sync_state.return_value = SyncState(last_sync=1705000000, sessions={})
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["status"])
+
+        assert result.exit_code == 0
+        assert "/custom/data/lance" in result.output
+
+    @patch("smart_fork.ingest.load_sync_state")
+    @patch("smart_fork.db.ChunkDatabase.open")
+    @patch(LOAD_CONFIG_PATH)
+    def test_status_never_synced(
+        self,
+        mock_load_config: MagicMock,
+        mock_db_open: MagicMock,
+        mock_load_sync_state: MagicMock,
+    ) -> None:
+        """Status shows 'Never' when last_sync is 0 but sessions exist."""
+        from pathlib import Path
+
+        from smart_fork.types import SyncState
+
+        mock_config = MagicMock()
+        mock_config.paths.lance_path = Path("/test/lance")
+        mock_config.paths.sync_state_path = Path("/test/sync-state.json")
+        mock_load_config.return_value = mock_config
+
+        mock_db = MagicMock()
+        mock_db.count_sessions.return_value = 5
+        mock_db.count_chunks.return_value = 50
+        mock_db_open.return_value = mock_db
+
+        # last_sync = 0 means never synced (shouldn't happen normally, but edge case)
+        mock_load_sync_state.return_value = SyncState(last_sync=0, sessions={})
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["status"])
+
+        assert result.exit_code == 0
+        assert "Never" in result.output
+
+    @patch(LOAD_CONFIG_PATH)
+    def test_status_config_error(self, mock_load_config: MagicMock) -> None:
+        """Status shows error when config fails to load."""
+        mock_load_config.side_effect = ValueError("Invalid config")
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["status"])
+
+        assert result.exit_code == 1
+        assert "Error loading config" in result.output
