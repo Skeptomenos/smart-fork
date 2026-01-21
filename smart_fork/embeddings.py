@@ -443,3 +443,70 @@ class OllamaProvider(EmbeddingProvider):
             Model identifier string (e.g., "nomic-embed-text").
         """
         return self._model_id
+
+
+def create_provider(
+    config: "EmbeddingConfig",
+    *,
+    allow_fallback: bool = True,
+) -> EmbeddingProvider:
+    """Factory function to create an embedding provider based on configuration.
+
+    Creates the appropriate embedding provider based on config.provider setting.
+    If the primary provider (Vertex AI) is unavailable, falls back to Ollama.
+
+    Fallback scenarios for Vertex AI:
+    - vertex_project is not configured (None)
+    - Vertex AI SDK not installed (ImportError)
+    - Authentication failure during initialization
+
+    Args:
+        config: Embedding configuration with provider settings.
+        allow_fallback: If True (default), falls back to Ollama when Vertex
+                       unavailable. If False, raises the original error.
+
+    Returns:
+        An initialized EmbeddingProvider (VertexAIProvider or OllamaProvider).
+
+    Raises:
+        EmbeddingError: If no provider can be created. This happens when:
+                       - allow_fallback=False and primary provider fails
+                       - Both Vertex and Ollama fail to initialize
+
+    Example usage:
+        >>> from smart_fork.config import EmbeddingConfig
+        >>> config = EmbeddingConfig(provider="vertex", vertex_project="my-project")
+        >>> provider = create_provider(config)
+        >>> provider.model_name()
+        'text-embedding-004'
+
+        >>> # Fallback to Ollama when Vertex unavailable
+        >>> config = EmbeddingConfig(provider="vertex")  # No project
+        >>> provider = create_provider(config)
+        >>> provider.model_name()
+        'nomic-embed-text'
+    """
+    # If Ollama is explicitly requested, use it directly
+    if config.provider == "ollama":
+        return OllamaProvider(config)
+
+    # Try Vertex AI as the primary provider
+    try:
+        return VertexAIProvider(config)
+    except ValueError as e:
+        # vertex_project not configured
+        if not allow_fallback:
+            raise EmbeddingError(
+                message=str(e),
+                provider="vertex",
+                cause=e,
+            )
+        # Fall through to Ollama
+    except EmbeddingError:
+        if not allow_fallback:
+            raise
+        # Fall through to Ollama
+
+    # Fallback to Ollama
+    # Note: OllamaProvider doesn't raise on init, only on embed()
+    return OllamaProvider(config)

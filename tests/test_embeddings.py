@@ -17,6 +17,7 @@ from smart_fork.embeddings import (
     EmbeddingProvider,
     OllamaProvider,
     VertexAIProvider,
+    create_provider,
 )
 
 if TYPE_CHECKING:
@@ -947,3 +948,121 @@ class TestOllamaProviderIntegration:
         # Should have called post exactly once
         assert mock_client.post.call_count == 1
         assert len(result) == 100
+
+
+# -----------------------------------------------------------------------------
+# create_provider Factory Tests
+# -----------------------------------------------------------------------------
+
+
+class TestCreateProviderWithOllama:
+    """Tests for create_provider() when Ollama is explicitly configured."""
+
+    def test_ollama_provider_when_configured(
+        self, ollama_config: EmbeddingConfig
+    ) -> None:
+        """Returns OllamaProvider when provider='ollama'."""
+        provider = create_provider(ollama_config)
+        assert isinstance(provider, OllamaProvider)
+        assert provider.model_name() == "nomic-embed-text"
+
+    def test_ollama_ignores_vertex_config(self) -> None:
+        """OllamaProvider returned even if vertex_project is set."""
+        config = EmbeddingConfig(
+            provider="ollama",
+            vertex_project="some-project",  # Should be ignored
+            ollama_model="custom-model",
+        )
+        provider = create_provider(config)
+        assert isinstance(provider, OllamaProvider)
+        assert provider.model_name() == "custom-model"
+
+
+class TestCreateProviderWithVertex:
+    """Tests for create_provider() when Vertex AI is configured."""
+
+    def test_vertex_provider_when_configured(
+        self, vertex_config: EmbeddingConfig
+    ) -> None:
+        """Returns VertexAIProvider when provider='vertex' and project set."""
+        provider = create_provider(vertex_config)
+        assert isinstance(provider, VertexAIProvider)
+        assert provider.model_name() == "text-embedding-004"
+
+    def test_vertex_custom_model(self) -> None:
+        """Returns VertexAIProvider with custom model."""
+        config = EmbeddingConfig(
+            provider="vertex",
+            vertex_project="test-project",
+            vertex_model="text-embedding-005",
+        )
+        provider = create_provider(config)
+        assert isinstance(provider, VertexAIProvider)
+        assert provider.model_name() == "text-embedding-005"
+
+
+class TestCreateProviderFallback:
+    """Tests for auto-fallback from Vertex to Ollama."""
+
+    def test_fallback_when_vertex_project_missing(self) -> None:
+        """Falls back to Ollama when vertex_project is None."""
+        config = EmbeddingConfig(
+            provider="vertex",
+            vertex_project=None,  # No project configured
+        )
+        provider = create_provider(config)
+        assert isinstance(provider, OllamaProvider)
+
+    def test_fallback_disabled_raises_error(self) -> None:
+        """Raises EmbeddingError when fallback disabled and Vertex unavailable."""
+        config = EmbeddingConfig(
+            provider="vertex",
+            vertex_project=None,
+        )
+        with pytest.raises(EmbeddingError) as exc_info:
+            create_provider(config, allow_fallback=False)
+
+        error = exc_info.value
+        assert error.provider == "vertex"
+        assert "vertex_project" in error.message.lower()
+
+    def test_fallback_uses_ollama_config(self) -> None:
+        """Fallback uses Ollama settings from config."""
+        config = EmbeddingConfig(
+            provider="vertex",
+            vertex_project=None,  # Triggers fallback
+            ollama_host="http://custom:8080",
+            ollama_model="custom-embed",
+        )
+        provider = create_provider(config)
+        assert isinstance(provider, OllamaProvider)
+        assert provider._host == "http://custom:8080"
+        assert provider.model_name() == "custom-embed"
+
+
+class TestCreateProviderEdgeCases:
+    """Edge case tests for create_provider()."""
+
+    def test_is_embedding_provider(self, ollama_config: EmbeddingConfig) -> None:
+        """Returned provider is an EmbeddingProvider."""
+        provider = create_provider(ollama_config)
+        assert isinstance(provider, EmbeddingProvider)
+
+    def test_vertex_provider_is_embedding_provider(
+        self, vertex_config: EmbeddingConfig
+    ) -> None:
+        """VertexAI provider is an EmbeddingProvider."""
+        provider = create_provider(vertex_config)
+        assert isinstance(provider, EmbeddingProvider)
+
+    def test_default_provider_is_vertex(self) -> None:
+        """Default config uses Vertex provider if project is set."""
+        config = EmbeddingConfig(vertex_project="default-project")
+        provider = create_provider(config)
+        assert isinstance(provider, VertexAIProvider)
+
+    def test_default_config_falls_back_to_ollama(self) -> None:
+        """Default config without project falls back to Ollama."""
+        config = EmbeddingConfig()  # No vertex_project
+        provider = create_provider(config)
+        assert isinstance(provider, OllamaProvider)
