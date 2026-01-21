@@ -215,9 +215,10 @@ Complete phases sequentially with these priorities within each phase:
 
 ## Phase 8: Quality Assurance (Tasks 8.1-8.4)
 
-- [ ] **Task 8.1**: Achieve mypy --strict compliance
+- [x] **Task 8.1**: Achieve mypy --strict compliance
       Files: All source files
       Test: `uv run mypy --strict smart_fork/` passes with zero errors
+      Impl: Already passing - 10 source files validated with zero errors
 
 - [ ] **Task 8.2**: Achieve >80% test coverage
       Files: `tests/`
@@ -338,9 +339,9 @@ Differences between spec and plan (resolved):
 | 5. Query | Complete | 3/3 | Yes |
 | 6. CLI | Complete | 5/5 | Yes |
 | 7. OpenCode | Complete | 2/2 | Yes |
-| 8. QA | Not Started | 0/4 | Parallel |
+| 8. QA | In Progress | 1/4 | Parallel |
 
-**Total**: 27/31 tasks complete (27/27 MVP tasks - all must-have requirements satisfied)
+**Total**: 28/31 tasks complete (27/27 MVP tasks + 1/4 QA tasks)
 
 > **Note**: Tasks 6.2-6.5 consolidated - search command, table output, fork command output, and error handling implemented together as tightly coupled functionality. Phase 6 complete.
 
@@ -392,3 +393,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 6.4 completed: status command with session count, chunk count, last sync time (relative format), database path display; 6 new tests in TestStatusCommand class (366 total); Phase 6 complete |
 | 2026-01-21 | Task 7.1 completed: Created ~/.config/opencode/commands/detect-fork.md with command definition including $ARGUMENTS support, scope/repo flags, table output format, and fork command instructions |
 | 2026-01-21 | Task 7.2 completed: Created ~/.config/opencode/skills/detect-fork/SKILL.md with full agent skill definition, YAML frontmatter, trigger conditions, CLI commands, scoring weights, scopes, output format, example interaction, troubleshooting; Phase 7 complete; **ALL MVP TASKS COMPLETE (27/27)** |
+| 2026-01-21 | Task 8.1 completed: mypy --strict already passing with zero errors across all 10 source files; 366 tests passing |
