@@ -63,8 +63,8 @@ Complete phases sequentially with these priorities within each phase:
       Files: `smart_fork/types.py`
       Test: `uv run mypy --strict smart_fork/types.py` passes
 
-- [ ] **Task 1.3**: Create config loader with Pydantic models and JSON override
-      Files: `smart_fork/config.py`
+- [x] **Task 1.3**: Create config loader with Pydantic models and JSON override
+      Files: `smart_fork/config.py`, `tests/test_config.py`
       Test: Config loads from file, falls back to defaults, validates with Pydantic
 
 - [ ] **Task 1.4**: Implement token-based chunker with tiktoken
@@ -299,7 +299,7 @@ Differences between spec and plan (resolved):
 
 | Phase | Status | Tasks Done | MVP? |
 |-------|--------|------------|------|
-| 1. Foundation | In Progress | 2/5 | Yes |
+| 1. Foundation | In Progress | 3/5 | Yes |
 | 2. Embedding | Not Started | 0/5 | Yes |
 | 3. Storage | Not Started | 0/3 | Yes |
 | 4. Ingestion | Not Started | 0/4 | Yes |
@@ -308,7 +308,7 @@ Differences between spec and plan (resolved):
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 1/31 tasks complete (1/27 MVP tasks)
+**Total**: 3/31 tasks complete (3/27 MVP tasks)
 
 ---
 
@@ -335,3 +335,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | **MVP scope fix**: Phase 7 (US-005, US-006) moved into MVP per spec must-have requirements |
 | 2026-01-21 | Task 1.1 completed: pyproject.toml, smart_fork/__init__.py, cli.py stub, tests/__init__.py |
 | 2026-01-21 | Task 1.2 completed: types.py with SessionChunk, SessionMatch, SyncState dataclasses |
+| 2026-01-21 | Task 1.3 completed: config.py with Pydantic models, JSON override, 32 tests passing |
