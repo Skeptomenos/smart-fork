@@ -71,9 +71,9 @@ Complete phases sequentially with these priorities within each phase:
       Files: `smart_fork/chunker.py`, `tests/test_chunker.py`
       Test: Chunker splits text at 512-1024 tokens with 50-token overlap
 
-- [ ] **Task 1.5**: Set up structlog for consistent logging
-      Files: `smart_fork/logging.py`
-      Test: Logs appear with structured format, log level configurable
+- [x] **Task 1.5**: Set up structlog for consistent logging
+      Files: `smart_fork/logging.py`, `tests/test_logging.py`
+      Test: Logs appear with structured format, log level configurable via env var or explicit config
 
 ## Phase 2: Embedding Layer (Tasks 2.1-2.5)
 
@@ -299,7 +299,7 @@ Differences between spec and plan (resolved):
 
 | Phase | Status | Tasks Done | MVP? |
 |-------|--------|------------|------|
-| 1. Foundation | In Progress | 4/5 | Yes |
+| 1. Foundation | Complete | 5/5 | Yes |
 | 2. Embedding | Not Started | 0/5 | Yes |
 | 3. Storage | Not Started | 0/3 | Yes |
 | 4. Ingestion | Not Started | 0/4 | Yes |
@@ -308,7 +308,7 @@ Differences between spec and plan (resolved):
 | 7. OpenCode | Not Started | 0/2 | Yes |
 | 8. QA | Not Started | 0/4 | Parallel |
 
-**Total**: 4/31 tasks complete (4/27 MVP tasks)
+**Total**: 5/31 tasks complete (5/27 MVP tasks)
 
 ---
 
@@ -337,3 +337,4 @@ Differences between spec and plan (resolved):
 | 2026-01-21 | Task 1.2 completed: types.py with SessionChunk, SessionMatch, SyncState dataclasses |
 | 2026-01-21 | Task 1.3 completed: config.py with Pydantic models, JSON override, 32 tests passing |
 | 2026-01-21 | Task 1.4 completed: chunker.py with token-based chunking, break point detection, 35 tests passing |
+| 2026-01-21 | Task 1.5 completed: logging.py with structlog configuration, context binding, JSON output, 24 tests passing (91 total) |
