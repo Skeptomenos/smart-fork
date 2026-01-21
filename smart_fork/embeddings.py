@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from smart_fork.config import EmbeddingConfig
@@ -297,5 +297,149 @@ class VertexAIProvider(EmbeddingProvider):
 
         Returns:
             Model identifier string (e.g., "text-embedding-004").
+        """
+        return self._model_id
+
+
+class OllamaProvider(EmbeddingProvider):
+    """Ollama embedding provider using local server.
+
+    Produces 768-dimensional embeddings using the nomic-embed-text model
+    (or other configured model). Designed as a fallback when Vertex AI
+    is unavailable (offline mode, no GCP auth).
+
+    Architecture:
+        Uses the Ollama API endpoint /api/embed for batch embeddings.
+        This is more efficient than the older /api/embeddings single-text endpoint.
+        See: https://github.com/ollama/ollama/blob/main/docs/api.md#generate-embeddings
+
+    Model compatibility:
+        - nomic-embed-text: 768 dimensions (default, matches Vertex AI)
+        - Other Ollama embedding models may have different dimensions
+        - Dimension mismatch will cause LanceDB schema errors
+
+    Example usage:
+        >>> from smart_fork.config import EmbeddingConfig
+        >>> config = EmbeddingConfig(provider="ollama")
+        >>> provider = OllamaProvider(config)
+        >>> embeddings = provider.embed(["hello world"])
+        >>> len(embeddings[0])  # Vector dimensions
+        768
+    """
+
+    # Expected dimensions for nomic-embed-text model
+    DIMENSIONS = 768
+
+    def __init__(self, config: "EmbeddingConfig") -> None:
+        """Initialize the Ollama embedding provider.
+
+        Args:
+            config: Embedding configuration containing host URL and model name.
+        """
+        self._host = config.ollama_host.rstrip("/")
+        self._model_id = config.ollama_model
+        self._dimensions = config.dimensions
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Generate embedding vectors for a list of texts.
+
+        Uses the Ollama /api/embed endpoint which supports batch input.
+        All texts are sent in a single request for efficiency.
+
+        Args:
+            texts: List of text strings to embed. Empty list returns empty list.
+                   Each text should be non-empty.
+
+        Returns:
+            List of embedding vectors (768 dimensions each by default).
+            Order matches input order.
+
+        Raises:
+            EmbeddingError: If the API call fails (connection error, model not found,
+                            server error, etc.)
+            ValueError: If texts contains None values.
+        """
+        if not texts:
+            return []
+
+        # Validate inputs before making any API calls
+        for i, text in enumerate(texts):
+            if text is None:
+                raise ValueError(f"texts[{i}] is None; all texts must be strings")
+
+        try:
+            # Import httpx lazily to avoid import cost if not used
+            import httpx
+
+            # Use /api/embed endpoint for batch embeddings
+            # Ollama API: https://github.com/ollama/ollama/blob/main/docs/api.md
+            url = f"{self._host}/api/embed"
+            payload: dict[str, Any] = {
+                "model": self._model_id,
+                "input": texts,
+            }
+
+            # Use a longer timeout for batch requests; embedding can be slow
+            with httpx.Client(timeout=60.0) as client:
+                response = client.post(url, json=payload)
+
+            # Check for HTTP errors
+            if response.status_code != 200:
+                error_msg = self._parse_error_message(response)
+                raise EmbeddingError(
+                    message=f"Ollama API returned status {response.status_code}: {error_msg}",
+                    provider="ollama",
+                )
+
+            # Parse response
+            data = response.json()
+            embeddings = data.get("embeddings", [])
+
+            if len(embeddings) != len(texts):
+                raise EmbeddingError(
+                    message=f"Expected {len(texts)} embeddings, got {len(embeddings)}",
+                    provider="ollama",
+                )
+
+            # Convert to list[list[float]] for consistency
+            return [list(emb) for emb in embeddings]
+
+        except EmbeddingError:
+            # Re-raise our own errors as-is
+            raise
+        except ImportError as e:
+            raise EmbeddingError(
+                message="httpx package not installed",
+                provider="ollama",
+                cause=e,
+            )
+        except Exception as e:
+            # Wrap all other errors
+            raise EmbeddingError(
+                message=f"Ollama API call failed: {e}",
+                provider="ollama",
+                cause=e,
+            )
+
+    def _parse_error_message(self, response: Any) -> str:
+        """Extract error message from Ollama API response.
+
+        Args:
+            response: httpx Response object.
+
+        Returns:
+            Error message string from response body, or raw text if parsing fails.
+        """
+        try:
+            data = response.json()
+            return str(data.get("error", response.text))
+        except Exception:
+            return response.text[:200] if response.text else "Unknown error"
+
+    def model_name(self) -> str:
+        """Return the identifier of the embedding model.
+
+        Returns:
+            Model identifier string (e.g., "nomic-embed-text").
         """
         return self._model_id

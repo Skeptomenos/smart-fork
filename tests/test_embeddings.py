@@ -15,6 +15,7 @@ from smart_fork.config import EmbeddingConfig
 from smart_fork.embeddings import (
     EmbeddingError,
     EmbeddingProvider,
+    OllamaProvider,
     VertexAIProvider,
 )
 
@@ -561,3 +562,388 @@ class TestEmbeddingProviderProtocol:
         provider = VertexAIProvider(vertex_config)
         assert callable(provider.embed)
         assert callable(provider.model_name)
+
+
+# -----------------------------------------------------------------------------
+# OllamaProvider Tests
+# -----------------------------------------------------------------------------
+
+
+@pytest.fixture
+def ollama_config() -> EmbeddingConfig:
+    """Create a config for Ollama provider testing."""
+    return EmbeddingConfig(
+        provider="ollama",
+        ollama_host="http://localhost:11434",
+        ollama_model="nomic-embed-text",
+        dimensions=768,
+    )
+
+
+def create_mock_ollama_response(
+    embeddings: list[list[float]],
+    status_code: int = 200,
+) -> MagicMock:
+    """Create a mock httpx Response for Ollama API."""
+    mock_response = MagicMock()
+    mock_response.status_code = status_code
+    mock_response.json.return_value = {"embeddings": embeddings}
+    mock_response.text = ""
+    return mock_response
+
+
+class TestOllamaProviderInit:
+    """Tests for OllamaProvider initialization."""
+
+    def test_stores_config_values(self, ollama_config: EmbeddingConfig) -> None:
+        """Provider stores configuration values."""
+        provider = OllamaProvider(ollama_config)
+        assert provider._host == "http://localhost:11434"
+        assert provider._model_id == "nomic-embed-text"
+        assert provider._dimensions == 768
+
+    def test_strips_trailing_slash_from_host(self) -> None:
+        """Trailing slash is stripped from host URL."""
+        config = EmbeddingConfig(
+            provider="ollama",
+            ollama_host="http://localhost:11434/",
+        )
+        provider = OllamaProvider(config)
+        assert provider._host == "http://localhost:11434"
+
+    def test_custom_host_and_model(self) -> None:
+        """Custom host and model can be configured."""
+        config = EmbeddingConfig(
+            provider="ollama",
+            ollama_host="http://myserver:8080",
+            ollama_model="custom-embed",
+        )
+        provider = OllamaProvider(config)
+        assert provider._host == "http://myserver:8080"
+        assert provider._model_id == "custom-embed"
+
+
+class TestOllamaProviderEmbed:
+    """Tests for OllamaProvider.embed() method."""
+
+    def test_empty_list_returns_empty(self, ollama_config: EmbeddingConfig) -> None:
+        """Embedding empty list returns empty list without API call."""
+        provider = OllamaProvider(ollama_config)
+        result = provider.embed([])
+        assert result == []
+
+    def test_none_in_texts_raises_valueerror(
+        self, ollama_config: EmbeddingConfig
+    ) -> None:
+        """Raises ValueError if texts contains None."""
+        provider = OllamaProvider(ollama_config)
+        with pytest.raises(ValueError, match="texts\\[0\\] is None"):
+            provider.embed([None])  # type: ignore[list-item]
+
+    def test_none_at_index_raises_with_index(
+        self, ollama_config: EmbeddingConfig
+    ) -> None:
+        """Error message includes the index of the None value."""
+        provider = OllamaProvider(ollama_config)
+        with pytest.raises(ValueError, match="texts\\[2\\] is None"):
+            provider.embed(["a", "b", None, "d"])  # type: ignore[list-item]
+
+    def test_single_text_embedding(self, ollama_config: EmbeddingConfig) -> None:
+        """Embeds a single text successfully."""
+        mock_response = create_mock_ollama_response([[0.1] * 768])
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+
+        with patch.dict(
+            "sys.modules",
+            {"httpx": MagicMock(Client=MagicMock(return_value=mock_client))},
+        ):
+            provider = OllamaProvider(ollama_config)
+            result = provider.embed(["hello world"])
+
+        assert len(result) == 1
+        assert len(result[0]) == 768
+        assert all(isinstance(v, float) for v in result[0])
+
+    def test_multiple_texts_embedding(self, ollama_config: EmbeddingConfig) -> None:
+        """Embeds multiple texts successfully."""
+        mock_embeddings = [[0.1 * (i + 1)] * 768 for i in range(3)]
+        mock_response = create_mock_ollama_response(mock_embeddings)
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+
+        with patch.dict(
+            "sys.modules",
+            {"httpx": MagicMock(Client=MagicMock(return_value=mock_client))},
+        ):
+            texts = ["text one", "text two", "text three"]
+            provider = OllamaProvider(ollama_config)
+            result = provider.embed(texts)
+
+        assert len(result) == 3
+        for embedding in result:
+            assert len(embedding) == 768
+
+    def test_sends_correct_request(self, ollama_config: EmbeddingConfig) -> None:
+        """Sends correct payload to Ollama API."""
+        mock_response = create_mock_ollama_response([[0.1] * 768, [0.2] * 768])
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+
+        with patch.dict(
+            "sys.modules",
+            {"httpx": MagicMock(Client=MagicMock(return_value=mock_client))},
+        ):
+            provider = OllamaProvider(ollama_config)
+            provider.embed(["hello", "world"])
+
+        # Verify the request was made correctly
+        mock_client.post.assert_called_once()
+        call_args = mock_client.post.call_args
+        assert call_args[0][0] == "http://localhost:11434/api/embed"
+        assert call_args[1]["json"]["model"] == "nomic-embed-text"
+        assert call_args[1]["json"]["input"] == ["hello", "world"]
+
+    def test_http_error_wrapped_in_embedding_error(
+        self, ollama_config: EmbeddingConfig
+    ) -> None:
+        """HTTP errors are wrapped in EmbeddingError."""
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.json.return_value = {"error": "Model not found"}
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+
+        with patch.dict(
+            "sys.modules",
+            {"httpx": MagicMock(Client=MagicMock(return_value=mock_client))},
+        ):
+            provider = OllamaProvider(ollama_config)
+
+            with pytest.raises(EmbeddingError) as exc_info:
+                provider.embed(["test"])
+
+            error = exc_info.value
+            assert error.provider == "ollama"
+            assert "status 500" in error.message
+
+    def test_connection_error_wrapped_in_embedding_error(
+        self, ollama_config: EmbeddingConfig
+    ) -> None:
+        """Connection errors are wrapped in EmbeddingError."""
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.side_effect = Exception("Connection refused")
+
+        with patch.dict(
+            "sys.modules",
+            {"httpx": MagicMock(Client=MagicMock(return_value=mock_client))},
+        ):
+            provider = OllamaProvider(ollama_config)
+
+            with pytest.raises(EmbeddingError) as exc_info:
+                provider.embed(["test"])
+
+            error = exc_info.value
+            assert error.provider == "ollama"
+            assert "Connection refused" in str(error)
+            assert error.cause is not None
+
+    def test_mismatched_embedding_count_raises_error(
+        self, ollama_config: EmbeddingConfig
+    ) -> None:
+        """Raises error if response has wrong number of embeddings."""
+        # Return 1 embedding when we sent 2 texts
+        mock_response = create_mock_ollama_response([[0.1] * 768])
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+
+        with patch.dict(
+            "sys.modules",
+            {"httpx": MagicMock(Client=MagicMock(return_value=mock_client))},
+        ):
+            provider = OllamaProvider(ollama_config)
+
+            with pytest.raises(EmbeddingError) as exc_info:
+                provider.embed(["text1", "text2"])
+
+            error = exc_info.value
+            assert error.provider == "ollama"
+            assert "Expected 2 embeddings, got 1" in error.message
+
+    def test_httpx_not_installed_raises_error(
+        self, ollama_config: EmbeddingConfig
+    ) -> None:
+        """Raises EmbeddingError if httpx is not installed."""
+        provider = OllamaProvider(ollama_config)
+
+        # Simulate httpx not installed by making import fail
+        import sys
+
+        # Temporarily remove httpx from modules
+        original_httpx = sys.modules.get("httpx")
+        sys.modules["httpx"] = None  # type: ignore[assignment]
+
+        try:
+            with pytest.raises(EmbeddingError) as exc_info:
+                provider.embed(["test"])
+
+            error = exc_info.value
+            # Note: When httpx is set to None, importing it raises TypeError
+            # The error will be caught as a general exception
+            assert error.provider == "ollama"
+        finally:
+            # Restore httpx
+            if original_httpx is not None:
+                sys.modules["httpx"] = original_httpx
+            else:
+                sys.modules.pop("httpx", None)
+
+
+class TestOllamaProviderModelName:
+    """Tests for OllamaProvider.model_name() method."""
+
+    def test_returns_configured_model(self, ollama_config: EmbeddingConfig) -> None:
+        """Returns the configured model name."""
+        provider = OllamaProvider(ollama_config)
+        assert provider.model_name() == "nomic-embed-text"
+
+    def test_returns_custom_model_name(self) -> None:
+        """Returns custom model name if configured."""
+        config = EmbeddingConfig(
+            provider="ollama",
+            ollama_model="mxbai-embed-large",
+        )
+        provider = OllamaProvider(config)
+        assert provider.model_name() == "mxbai-embed-large"
+
+
+class TestOllamaProviderErrorHandling:
+    """Tests for OllamaProvider error parsing."""
+
+    def test_parse_error_from_json_response(
+        self, ollama_config: EmbeddingConfig
+    ) -> None:
+        """Parses error message from JSON response."""
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.text = '{"error": "model not found"}'
+        mock_response.json.return_value = {"error": "model not found"}
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+
+        with patch.dict(
+            "sys.modules",
+            {"httpx": MagicMock(Client=MagicMock(return_value=mock_client))},
+        ):
+            provider = OllamaProvider(ollama_config)
+
+            with pytest.raises(EmbeddingError) as exc_info:
+                provider.embed(["test"])
+
+            error = exc_info.value
+            assert "model not found" in error.message
+
+    def test_parse_error_from_plain_text_response(
+        self, ollama_config: EmbeddingConfig
+    ) -> None:
+        """Falls back to text when JSON parsing fails."""
+        mock_response = MagicMock()
+        mock_response.status_code = 502
+        mock_response.text = "Bad Gateway"
+        mock_response.json.side_effect = Exception("Not JSON")
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+
+        with patch.dict(
+            "sys.modules",
+            {"httpx": MagicMock(Client=MagicMock(return_value=mock_client))},
+        ):
+            provider = OllamaProvider(ollama_config)
+
+            with pytest.raises(EmbeddingError) as exc_info:
+                provider.embed(["test"])
+
+            error = exc_info.value
+            assert "Bad Gateway" in error.message
+
+
+class TestOllamaProviderProtocol:
+    """Verify OllamaProvider satisfies EmbeddingProvider interface."""
+
+    def test_is_embedding_provider(self, ollama_config: EmbeddingConfig) -> None:
+        """OllamaProvider is an instance of EmbeddingProvider."""
+        provider = OllamaProvider(ollama_config)
+        assert isinstance(provider, EmbeddingProvider)
+
+    def test_has_required_methods(self, ollama_config: EmbeddingConfig) -> None:
+        """OllamaProvider has all required methods."""
+        provider = OllamaProvider(ollama_config)
+        assert callable(provider.embed)
+        assert callable(provider.model_name)
+
+
+class TestOllamaProviderIntegration:
+    """Integration-style tests for realistic scenarios."""
+
+    def test_preserves_input_order(self, ollama_config: EmbeddingConfig) -> None:
+        """Embeddings are returned in same order as inputs."""
+        # Each embedding has unique first value to track order
+        mock_embeddings = [[float(i)] + [0.0] * 767 for i in range(5)]
+        mock_response = create_mock_ollama_response(mock_embeddings)
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+
+        with patch.dict(
+            "sys.modules",
+            {"httpx": MagicMock(Client=MagicMock(return_value=mock_client))},
+        ):
+            provider = OllamaProvider(ollama_config)
+            texts = [f"text {i}" for i in range(5)]
+            result = provider.embed(texts)
+
+        # Verify order is preserved
+        assert [r[0] for r in result] == [0.0, 1.0, 2.0, 3.0, 4.0]
+
+    def test_large_batch_single_request(self, ollama_config: EmbeddingConfig) -> None:
+        """All texts sent in single request (no internal batching)."""
+        # Ollama handles batching internally, so we send all at once
+        mock_embeddings = [[0.1] * 768 for _ in range(100)]
+        mock_response = create_mock_ollama_response(mock_embeddings)
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+
+        with patch.dict(
+            "sys.modules",
+            {"httpx": MagicMock(Client=MagicMock(return_value=mock_client))},
+        ):
+            provider = OllamaProvider(ollama_config)
+            texts = [f"text {i}" for i in range(100)]
+            result = provider.embed(texts)
+
+        # Should have called post exactly once
+        assert mock_client.post.call_count == 1
+        assert len(result) == 100
