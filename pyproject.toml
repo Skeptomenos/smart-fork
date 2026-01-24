@@ -24,6 +24,7 @@ dependencies = [
     "pydantic>=2.0",
     "structlog>=24.0",
     "pyarrow>=14.0",
+    "mcp[cli]>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +36,7 @@ dev = [
 
 [project.scripts]
 smart-fork = "smart_fork.cli:main"
+smart-fork-mcp = "smart_fork.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["smart_fork"]
