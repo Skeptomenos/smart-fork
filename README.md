@@ -114,7 +114,7 @@ uv run smart-fork --help
 
 **In Development** - Phase 1 (Foundation) in progress.
 
-See [ralph-wiggum/code/plan.md](ralph-wiggum/code/plan.md) for implementation progress.
+See [ralph-wiggum/code/plan.md](session-reference/ralph-wiggum/code/plan.md) for implementation progress.
 
 ## License
 
