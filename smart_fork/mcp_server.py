@@ -193,12 +193,23 @@ def smart_fork_status() -> dict[str, Any]:
                 ).isoformat()
                 last_sync_ago = _format_time_ago(last_sync_ts)
 
+        # Check daemon status
+        from smart_fork.daemon.manager import DaemonManager
+
+        manager = DaemonManager(config)
+        daemon_running = manager.is_running()
+        daemon_pid = manager.get_pid() if daemon_running else None
+
         return {
             "sessions": session_count,
             "chunks": chunk_count,
             "last_sync": last_sync,
             "last_sync_ago": last_sync_ago,
             "database_path": str(db_path),
+            "daemon": {
+                "running": daemon_running,
+                "pid": daemon_pid,
+            },
         }
     except Exception as e:
         return {
@@ -207,6 +218,7 @@ def smart_fork_status() -> dict[str, Any]:
             "chunks": 0,
             "last_sync": None,
             "database_path": None,
+            "daemon": {"running": False},
         }
 
 

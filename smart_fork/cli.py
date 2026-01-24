@@ -419,5 +419,128 @@ def status() -> None:
     console.print(f"[dim]Database:[/dim] {config.paths.lance_path}")
 
 
+@main.command()
+def watch() -> None:
+    """Watch for new sessions and sync automatically.
+
+    Runs in the foreground and monitors the sessions directory for changes.
+    When a new session is created or modified, it waits for activity to settle
+    (debounce) and then triggers an incremental sync.
+
+    This is the core component of the Smart Fork daemon.
+    """
+    # Lazy imports
+    from smart_fork.config import load_config
+    from smart_fork.daemon.watcher import SessionWatcher
+
+    console = _get_console()
+
+    try:
+        config = load_config()
+    except ValueError as e:
+        console.print(f"[red]Error loading config:[/red] {e}")
+        sys.exit(1)
+
+    # Determine watch path
+    if config.paths.is_legacy_mode():
+        watch_path = config.paths.sessions_dir
+    else:
+        # Watch the storage root to catch session/message/part changes
+        watch_path = config.paths.storage_dir
+
+    if not watch_path or not watch_path.exists():
+        console.print(f"[red]Error:[/red] Watch path does not exist: {watch_path}")
+        sys.exit(1)
+
+    console.print(f"[bold]Watching for changes in:[/bold] {watch_path}")
+    console.print("[dim]Press Ctrl+C to stop[/dim]")
+    console.print()
+
+    watcher = SessionWatcher(watch_path)
+    watcher.run_forever()
+
+
+@main.group()
+def daemon() -> None:
+    """Manage the background sync daemon."""
+    pass
+
+
+@daemon.command()
+def start() -> None:
+    """Start the daemon in the background."""
+    from smart_fork.daemon.manager import DaemonManager
+
+    DaemonManager().start()
+
+
+@daemon.command()
+def stop() -> None:
+    """Stop the daemon."""
+    from smart_fork.daemon.manager import DaemonManager
+
+    DaemonManager().stop()
+
+
+@daemon.command()
+def restart() -> None:
+    """Restart the daemon."""
+    from smart_fork.daemon.manager import DaemonManager
+
+    DaemonManager().restart()
+
+
+@daemon.command(name="status")
+def daemon_status() -> None:
+    """Check daemon status."""
+    from smart_fork.daemon.manager import DaemonManager
+
+    DaemonManager().status()
+
+
+@daemon.command()
+def enable() -> None:
+    """Enable auto-start on login."""
+    from smart_fork.daemon.manager import DaemonManager
+
+    DaemonManager().enable_autostart()
+
+
+@daemon.command()
+def disable() -> None:
+    """Disable auto-start."""
+    from smart_fork.daemon.manager import DaemonManager
+
+    DaemonManager().disable_autostart()
+
+
+@daemon.command()
+def logs() -> None:
+    """Follow the daemon logs."""
+    import time
+    from smart_fork.daemon.manager import DaemonManager
+
+    manager = DaemonManager()
+    log_file = manager.log_file
+
+    if not log_file.exists():
+        print(f"Log file not found: {log_file}")
+        return
+
+    print(f"Tailing {log_file} (Ctrl+C to stop)...")
+    try:
+        with open(log_file, "r") as f:
+            # Go to end
+            f.seek(0, 2)
+            while True:
+                line = f.readline()
+                if line:
+                    print(line, end="")
+                else:
+                    time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass
+
+
 if __name__ == "__main__":
     main()

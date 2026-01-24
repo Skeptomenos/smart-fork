@@ -57,6 +57,21 @@ smart-fork search --scope repo "continue the refactoring"
 smart-fork status
 ```
 
+## Automatic Sync (Daemon)
+
+Smart Fork can monitor your sessions directory and automatically index new sessions in the background.
+
+```bash
+# Start background watcher
+smart-fork daemon start
+
+# Check status
+smart-fork daemon status
+
+# Enable auto-start on login (macOS)
+smart-fork daemon enable
+```
+
 ## OpenCode Integration
 
 Smart Fork integrates with OpenCode via a custom command:
@@ -112,9 +127,15 @@ uv run smart-fork --help
 
 ## Status
 
-**In Development** - Phase 1 (Foundation) in progress.
+**Complete** - All core features implemented.
 
-See [ralph-wiggum/code/plan.md](session-reference/ralph-wiggum/code/plan.md) for implementation progress.
+- [x] Semantic search with Vertex AI / Ollama
+- [x] LanceDB vector storage
+- [x] OpenCode integration (command + skill)
+- [x] Background sync daemon
+- [x] MCP server
+
+See [ralph-wiggum/code/plan.md](session-reference/ralph-wiggum/code/plan.md) for implementation details.
 
 ## License
 

@@ -25,11 +25,13 @@ Why session discovery is a separate concern:
 
 from __future__ import annotations
 
+import fcntl
 import json
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Generator
 
 import structlog
 
@@ -1001,6 +1003,34 @@ class SyncProgress:
     status: str
 
 
+@contextmanager
+def acquire_lock(lock_path: Path) -> Generator[None, None, None]:
+    """Acquire an exclusive file lock.
+
+    Args:
+        lock_path: Path to the lock file.
+
+    Raises:
+        OSError: If lock cannot be acquired (already locked).
+    """
+    lock_path = lock_path.expanduser()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(lock_path, "w") as f:
+        try:
+            # Try to acquire exclusive, non-blocking lock
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            yield
+        except OSError as e:
+            logger.info("lock_acquisition_failed", path=str(lock_path), error=str(e))
+            raise OSError(f"Could not acquire lock on {lock_path}") from e
+        finally:
+            try:
+                fcntl.flock(f, fcntl.LOCK_UN)
+            except OSError:
+                pass
+
+
 def sync_sessions(
     config: SmartForkConfig | None = None,
     *,
@@ -1011,12 +1041,13 @@ def sync_sessions(
 
     This is the main entry point for ingesting sessions into the vector database.
     It handles the complete pipeline:
-    1. Load configuration and sync state
-    2. Discover sessions from the sessions directory
-    3. Determine which sessions are new/modified/deleted
-    4. Delete removed sessions from the index
-    5. For each session to process: parse → chunk → embed → store
-    6. Save updated sync state
+    1. Acquire file lock to prevent concurrent syncs
+    2. Load configuration and sync state
+    3. Discover sessions from the sessions directory
+    4. Determine which sessions are new/modified/deleted
+    5. Delete removed sessions from the index
+    6. For each session to process: parse → chunk → embed → store
+    7. Save updated sync state
 
     Error handling:
     - Individual session failures don't stop the sync
@@ -1045,6 +1076,27 @@ def sync_sessions(
     if config is None:
         config = load_config()
 
+    result = SyncResult()
+
+    # Define lock path next to sync state
+    lock_path = config.paths.sync_state_path.parent / "sync.lock"
+
+    try:
+        with acquire_lock(lock_path):
+            return _sync_sessions_impl(config, force, progress_callback)
+    except OSError:
+        # Lock acquisition failed
+        if result.errors is not None:
+            result.errors.append("Sync already in progress (lock held)")
+        return result
+
+
+def _sync_sessions_impl(
+    config: SmartForkConfig,
+    force: bool,
+    progress_callback: Callable[[SyncProgress], None] | None,
+) -> SyncResult:
+    """Internal implementation of sync_sessions, executed under lock."""
     result = SyncResult()
 
     # Load sync state
